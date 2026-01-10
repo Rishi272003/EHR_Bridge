@@ -65,11 +65,11 @@ SECURE_CONTENT_TYPE_NOSNIFF = env.bool(
 
 
 # https://django-storages.readthedocs.io/en/latest/backends/amazon-S3.html#settings
-AWS_ACCESS_KEY_ID = env("DJANGO_AWS_ACCESS_KEY_ID")
+AWS_ACCESS_KEY_ID = env("DJANGO_AWS_ACCESS_KEY_ID", default="")
 # https://django-storages.readthedocs.io/en/latest/backends/amazon-S3.html#settings
-AWS_SECRET_ACCESS_KEY = env("DJANGO_AWS_SECRET_ACCESS_KEY")
+AWS_SECRET_ACCESS_KEY = env("DJANGO_AWS_SECRET_ACCESS_KEY", default="")
 # https://django-storages.readthedocs.io/en/latest/backends/amazon-S3.html#settings
-AWS_STORAGE_BUCKET_NAME = env("DJANGO_AWS_STORAGE_BUCKET_NAME")
+AWS_STORAGE_BUCKET_NAME = env("DJANGO_AWS_STORAGE_BUCKET_NAME", default="")
 # https://django-storages.readthedocs.io/en/latest/backends/amazon-S3.html#settings
 AWS_QUERYSTRING_AUTH = False
 # DO NOT change these unless you know what you're doing.
@@ -87,28 +87,44 @@ AWS_S3_MAX_MEMORY_SIZE = env.int(
 AWS_S3_REGION_NAME = env("DJANGO_AWS_S3_REGION_NAME", default=None)
 # https://django-storages.readthedocs.io/en/latest/backends/amazon-S3.html#cloudfront
 AWS_S3_CUSTOM_DOMAIN = env("DJANGO_AWS_S3_CUSTOM_DOMAIN", default=None)
-aws_s3_domain = AWS_S3_CUSTOM_DOMAIN or f"{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com"
-# STATIC & MEDIA
-# ------------------------
-STORAGES = {
-    "default": {
-        "BACKEND": "storages.backends.s3.S3Storage",
-        "OPTIONS": {
-            "location": "media",
-            "file_overwrite": False,
+
+# Use S3 storage only if bucket name is provided, otherwise use local storage
+if AWS_STORAGE_BUCKET_NAME:
+    aws_s3_domain = AWS_S3_CUSTOM_DOMAIN or f"{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com"
+    # STATIC & MEDIA
+    # ------------------------
+    STORAGES = {
+        "default": {
+            "BACKEND": "storages.backends.s3.S3Storage",
+            "OPTIONS": {
+                "location": "media",
+                "file_overwrite": False,
+            },
         },
-    },
-    "staticfiles": {
-        "BACKEND": "storages.backends.s3.S3Storage",
-        "OPTIONS": {
-            "location": "static",
-            "default_acl": "public-read",
+        "staticfiles": {
+            "BACKEND": "storages.backends.s3.S3Storage",
+            "OPTIONS": {
+                "location": "static",
+                "default_acl": "public-read",
+            },
         },
-    },
-}
-MEDIA_URL = f"https://{aws_s3_domain}/media/"
-COLLECTFASTA_STRATEGY = "collectfasta.strategies.boto3.Boto3Strategy"
-STATIC_URL = f"https://{aws_s3_domain}/static/"
+    }
+    MEDIA_URL = f"https://{aws_s3_domain}/media/"
+    COLLECTFASTA_STRATEGY = "collectfasta.strategies.boto3.Boto3Strategy"
+    STATIC_URL = f"https://{aws_s3_domain}/static/"
+else:
+    # Fallback to local storage if S3 is not configured
+    from .base import STATIC_ROOT, STATIC_URL, MEDIA_ROOT, MEDIA_URL  # noqa: F401
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
+    }
+    # collectfasta will be conditionally added later only if S3 is configured
+    COLLECTFASTA_STRATEGY = None
 
 # EMAIL
 # ------------------------------------------------------------------------------
@@ -144,7 +160,9 @@ ANYMAIL = {}
 # Collectfasta
 # ------------------------------------------------------------------------------
 # https://github.com/jasongi/collectfasta#installation
-INSTALLED_APPS = ["collectfasta", *INSTALLED_APPS]
+# Only add collectfasta if S3 is configured
+if AWS_STORAGE_BUCKET_NAME:
+    INSTALLED_APPS = ["collectfasta", *INSTALLED_APPS]  # noqa: F405
 
 # LOGGING
 # ------------------------------------------------------------------------------
