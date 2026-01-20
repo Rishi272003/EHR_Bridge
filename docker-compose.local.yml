@@ -21,7 +21,7 @@ services:
       - ./.envs/.local/.django
       - ./.envs/.local/.postgres
     ports:
-      - '8000:8000'
+      - '8001:8001'
     command: /start
 
   postgres:
@@ -35,18 +35,22 @@ services:
       - ehr_bridge_local_postgres_data_backups:/backups
     env_file:
       - ./.envs/.local/.postgres
+    ports:
+      - '5433:5432'
 
   mailpit:
     image: docker.io/axllent/mailpit:latest
     container_name: ehr_bridge_local_mailpit
     ports:
-      - "8025:8025"
+      - "8026:8025"
 
   redis:
     image: docker.io/redis:7.2
     container_name: ehr_bridge_local_redis
     volumes:
       - ehr_bridge_local_redis_data:/data
+    ports:
+      - '6380:6379'
 
   celeryworker:
     <<: *django
@@ -75,5 +79,5 @@ services:
     image: ehr_bridge_local_flower
     container_name: ehr_bridge_local_flower
     ports:
-      - '5555:5555'
+      - '5556:5556'
     command: /start-flower

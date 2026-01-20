@@ -73,8 +73,8 @@ CELERY_TASK_EAGER_PROPAGATES = True
 # CSRF trusted origins - required for POST/PUT/DELETE requests through ngrok
 CSRF_TRUSTED_ORIGINS = [
     "https://2ec66afae2c5.ngrok-free.app",
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
+    "http://localhost:8001",
+    "http://127.0.0.1:8001",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
