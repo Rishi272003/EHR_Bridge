@@ -1,1186 +1,1527 @@
-import base64
-import io
-import xml.etree.ElementTree as ET
 from datetime import datetime
-from io import BytesIO
 
-from django.db import transaction
-from django.utils.dateparse import parse_datetime
-from reportlab.pdfgen import canvas
 from rest_framework import status
 from rest_framework.response import Response
 
-from ecaremd.careplan.models import Condition, ICDCode
-from ecaremd.core.api.serializers.lab import LabResultFileSerializer
-from ecaremd.core.constants import ADDRESS_STATE_CHOICES
-from ecaremd.core.models.allergy import Allergy as PatientAllergyModel
-from ecaremd.core.models.condition import PatientCondition
-from ecaremd.core.models.lab import LabResult as PatientLabResult
-from ecaremd.core.models.medication import Medication as PatientMedicationModel
-from ecaremd.core.models.patient import CCDADocument
-from ecaremd.core.models.patient import Patient as PatientModel
-from ecaremd.core.models.vital import Vital as PatientVitalModel
-from ecaremd.ehr_integrations.ehr_services.eclinicalworks.categories.Chart import Chart
-from ecaremd.ehr_integrations.ehr_services.eclinicalworks.categories.DiagnosticReport import (
-    DiagnosticReport,
-)
-from ecaremd.ehr_integrations.ehr_services.eclinicalworks.categories.DocumentReference import (
-    DocumentReference,
-)
-from ecaremd.ehr_integrations.ehr_services.eclinicalworks.categories.Organization import (
-    Organization,
-)
-from ecaremd.ehr_integrations.ehr_services.transformer import Transformer
-from ecaremd.provider_group.models import ProviderGroup
-
+from services.ehr.transformer import Transformer
+from services.ehr.eclinicalworks.categories.Chart import Chart
+from services.ehr.eclinicalworks.categories.Patient import Patient
+from services.ehr.eclinicalworks.categories.DiagnosticReport import DiagnosticReport
 
 class PatientQueryTransformer(Transformer):
-    def __init__(self, source_data, customer_id, ehr_name, tenant_name):
-        super().__init__(source_data, customer_id, tenant_name)
-        self.temp_response = {}
-        self.ehr_name = ehr_name
-        self.patient_provider_group = None
-        self.patient_obj = None
+    def __init__(self, connection_obj, source_data):
+        self.source_json = source_data
+        self.connection = connection_obj
+        self.patient_id = None
+        self.destination_response = {
+            "Meta": {
+                "DataModel": "Clinical Summary",
+                "EventType": "PatientQueryResponse",
+                "Source": {"ID": self.connection.uuid, "Name": "connectionid"},
+                "Raw": [],
+            },
+        }
 
     def transform(self, events):
-        patient = Chart(self.customer_id, self.tenant_name, self.source_json)
-        patient.authenticate()
-
-        provider_group = self.source_json.get("pg_id")
         try:
-            self.patient_provider_group = ProviderGroup.objects.get(id=provider_group)
-        except ProviderGroup.DoesNotExist:
-            return Response({"detail": "Provider Group not found"}, status=400)
-        self.destination_json["start_date"] = self.source_json.get("startdate")
-        self.destination_json["end_date"] = self.source_json.get("enddate")
-        if isinstance(self.source_json.get("patientid"), list):
-            for single_patient in self.source_json.get("patientid"):
-                self.destination_json["patientid"] = single_patient
-
-                try:
-                    self.patient_obj = PatientModel.objects.get(
-                        ehr_id=self.destination_json["patientid"]
-                    )
-                    return Response(
-                        {
-                            "detail": f"Patient  {self.patient_obj.first_name} {self.patient_obj.last_name} is already imported."
-                        },
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-
-                except PatientModel.DoesNotExist:
-                    for event in events:
-                        event = event.lower()
-
-                        # Demographics Data
-                        if event == "demographics" or event == "all":
-                            self.patient_demographics_status = (
-                                self.get_patient_demographics()
-                            )
-                            print(
-                                "Self.patient demographics status",
-                                self.patient_demographics_status,
-                                self.patient_obj,
-                            )
-                        if self.patient_demographics_status == 201 and self.patient_obj:
-                            try:
-                                # Conditions Data
-                                if event == "conditions" or event == "all":
-                                    created_repsonse = self.create_conditions_entries()
-                                    self.destination_response.update(created_repsonse)
-                                # Allergy Data
-                                if event == "allergies" or event == "all":
-                                    created_repsonse = self.create_allergies_entries()
-                                    self.destination_response.update(created_repsonse)
-                                # Medication Data
-                                if event == "medications" or event == "all":
-                                    created_repsonse = (
-                                        self.medication_from_ccda()
-                                    )  # function changed
-                                    self.destination_response.update(created_repsonse)
-                                # Lab Result Data
-                                if event == "labresult" or event == "all":
-                                    created_repsonse = self.create_lab_result_entries()
-                                    self.destination_response.update(created_repsonse)
-                                # Vitals Data
-                                if event == "vitals" or event == "all":
-                                    created_repsonse = self.create_vitals_entries()
-                                    self.destination_response.update(created_repsonse)
-                                # Document Data
-                                if event == "Documents" or event == "all":
-                                    created_repsonse = self.patient_document()
-                                    self.destination_response.update(created_repsonse)
-                            except Exception as e:
-                                PatientModel.objects.get(
-                                    ehr_id=self.patient_obj.ehr_id
-                                ).delete()
-                                self.destination_response.update(
-                                    {"erromsg": str(e), "status_code": 400}
-                                )
-                                return Response(
-                                    {
-                                        "detail": f"Patient not imported due to some error {str(e)}"
-                                    },
-                                    status=400,
-                                )
-                        else:
-                            self.destination_response.update(
-                                {"errormsg": "Patient not imported", "status_code": 400}
-                            )
-            return self.destination_response
-
-    def get_patient_demographics(self):
-        result = None
-        patient = Chart(self.customer_id, self.tenant_name, self.source_json)
-        patient.authenticate()
-        (
-            patient_response,
-            status_code,
-        ) = patient.get_patient_demographics(
-            patient.practice_id, **self.destination_json
-        )
-        if status_code == 200 and patient_response.get("entry"):
-            for patient_data in patient_response.get("entry"):
-                self.temp_response = {}
-                patient_info = patient_data.get("resource")
-                self.temp_response["id"] = patient_info.get("id")
-                if "identifier" in patient_info:
-                    for ids in patient_info.get("identifier"):
-                        if ids["use"] == "secondary":
-                            self.temp_response["mrn"] = ids["value"]
-                for patient_name in patient_info.get("name"):
-                    if "given" in patient_name:
-                        self.temp_response["first_name"] = patient_name.get("given")[0]
-                        self.temp_response["middle_name"] = (
-                            patient_name.get("given")[1]
-                            if len(patient_name.get("given")) > 1
-                            else None
-                        )
-                        self.temp_response["last_name"] = patient_name.get("family")
-
-                        self.temp_response["dob"] = patient_info.get("birthDate")
-                        self.temp_response["sex"] = (
-                            patient_info.get("gender").title()
-                            if patient_info.get("gender")
-                            else None
-                        )
-                        self.temp_response["marital_status"] = (
-                            patient_info.get("maritalStatus").get("text")
-                            if patient_info.get("maritalStatus")
-                            else None
-                        )
-
-                if patient_info.get("address"):
-                    for patient_address in patient_info.get("address"):
-                        if patient_address.get("use") == "home":
-                            if patient_address.get("line"):
-                                for line, address in enumerate(
-                                    patient_address.get("line"),
-                                    start=1,
-                                ):
-                                    self.temp_response[f"address_line_{line}"] = address
-                            self.temp_response["city"] = patient_address.get("city")
-                            patient_state = {
-                                name: abbreviation
-                                for abbreviation, name in ADDRESS_STATE_CHOICES
-                            }
-                            self.temp_response["state"] = (
-                                patient_state.get(patient_address.get("state").title())
-                                if patient_address.get("state")
-                                else None
-                            )
-                            self.temp_response["country"] = patient_address.get(
-                                "country"
-                            )
-                            self.temp_response["zip"] = patient_address.get(
-                                "postalCode"
-                            )
-
-                if patient_info.get("telecom"):
-                    for contacts in patient_info.get("telecom"):
-                        if contacts.get("system") == "email":
-                            self.temp_response["email"] = contacts.get("value")
-                        if contacts.get("use") == "mobile":
-                            self.temp_response["primary_phone"] = (
-                                contacts.get("value").replace("-", "")
-                                if contacts.get("value")
-                                else None
-                            )
-                        if contacts.get("use") == "home":
-                            self.temp_response["home_phone"] = (
-                                contacts.get("value").replace("-", "")
-                                if contacts.get("value")
-                                else None
-                            )
-                        if contacts.get("use") == "work":
-                            self.temp_response["work_phone"] = (
-                                contacts.get("value").replace("-", "")
-                                if contacts.get("value")
-                                else None
-                            )
-
-            self.temp_response["provider_group"] = self.patient_provider_group
-            self.temp_response["ehr_name"] = self.ehr_name
-            self.destination_response.update(
-                {
-                    "success": patient_response,
-                    "statuscode": status_code,
-                }
-            )
-            result = super().create_patient(**self.temp_response)
-            try:
-                self.patient_obj = PatientModel.objects.get(
-                    ehr_id=self.destination_json["patientid"]
-                )
-            except Exception as e:
-                return Response(
-                    {"detail": f"Patient not imported.{str(e)}"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            return result
-        else:
-            self.destination_response.update(
-                {
-                    "errormessage": patient_response,
-                    "statuscode": status_code,
-                }
-            )
-        return 400
-
-    def create_patient_insurance_payload(self):
-        patients_chart = Chart(self.customer_id, self.tenant_name, self.source_json)
-        patients_chart.authenticate()
-        self.destination_json["patient"] = self.patient_obj
-
-        insurance_response, status_code = patients_chart.get_patient_insurance(
-            patients_chart.practice_id, **self.destination_json
-        )
-        insurance_payloads = []
-        if status_code == 200 and insurance_response.get("entry"):
-            if insurance_response.get("entry"):
-                for insurance in insurance_response.get("entry"):
-                    resource = insurance.get("resource", {})
-                    insurance_payload = {}
-
-                    insurance_payload["effective_date"] = resource.get("meta", {}).get(
-                        "lastUpdated"
-                    )
-                    type_info = resource.get("type", {})
-
-                    insurance_payload["name"] = type_info.get("text")
-
-                    relatable = (
-                        resource.get("relationship", {}).get("text")
-                        if resource.get("relationship")
-                        else None
-                    )
-                    if relatable:
-                        insurance_payload["relation_to_insured"] = resource.get(
-                            "relationship", {}
-                        ).get("text")
-
-                    payors = resource.get("payor", [])
-                    insurance_organization = Organization(
-                        self.customer_id, self.tenant_name, self.source_json
-                    )
-                    insurance_organization.authenticate()
-                    if isinstance(payors, list) and payors:
-                        for payor in payors:
-                            reference = payors[0].get("reference", "")
-                            organizatio_id = (
-                                reference.split("/")[1] if "/" in reference else None
-                            )
-                            if not organizatio_id:
-                                continue
-                            (
-                                organization_response,
-                                status_code,
-                            ) = insurance_organization.get_organization(
-                                insurance_organization.practice_id, organizatio_id
-                            )
-                            if status_code == 200 and organization_response:
-                                insurance_payload[
-                                    "company_name"
-                                ] = organization_response.get("name")
-                                telecoms = organization_response.get("telecom", [])
-                                for contact in telecoms:
-                                    system = contact.get("system")
-                                    value = (
-                                        contact.get("value", "")
-                                        .replace(" ", "")
-                                        .strip()
-                                    )
-                                    use = contact.get("use", "")
-
-                                    if (
-                                        system == "phone"
-                                        and not insurance_payload["company_phone"]
-                                    ):
-                                        # Prioritize phone with 'home' use
-                                        if use == "home":
-                                            insurance_payload["company_phone"] = value
-                                        elif not any(
-                                            t.get("use") == "home" for t in telecoms
-                                        ):
-                                            # Fallback to first phone if no 'home' phone exists
-                                            insurance_payload["company_phone"] = value
-
-                                    if (
-                                        system == "email"
-                                        and not insurance_payload["company_email"]
-                                    ):
-                                        insurance_payload["company_email"] = value
-
-                    # Append only if we got something useful
-                    if any(insurance_payload.values()):
-                        insurance_payloads.append(insurance_payload)
-            return insurance_payloads
-        else:
-            return False
-
-    def create_allergies_entries(self):
-        patients_chart = Chart(self.customer_id, self.tenant_name, self.source_json)
-        patients_chart.authenticate()
-        self.destination_json["patient"] = self.patient_obj.ehr_id
-
-        allergies_response, status_code = patients_chart.get_patient_allergy(
-            patients_chart.practice_id, **self.destination_json
-        )
-        if status_code == 200:
-            if allergies_response.get("total") > 0:
-                for allergy in allergies_response.get("entry"):
-                    allergies_payload = {}
-                    code = allergy.get("resource", {}).get("code", {})
-                    if code:
-                        allergies_payload["name"] = code.get("text")
-                        for coding in code.get("coding", []):
-                            if coding.get("display"):
-                                allergies_payload["name"] = coding["display"]
-
-                    severity = None
-                    reaction = None
-                    for reaction_item in allergy.get("resource", {}).get(
-                        "reaction", []
-                    ):
-                        for manifestation in reaction_item.get("manifestation", []):
-                            reaction = manifestation.get("text")
-
-                    recorded_date = allergy.get("resource", {}).get("recordedDate")
-                    formatted_date = None
-                    if recorded_date:
-                        date_obj = datetime.fromisoformat(
-                            recorded_date.replace("Z", "+00:00")
-                        )
-                        formatted_date = date_obj.strftime("%Y-%m-%d %H:%M:%S")
-
-                    allergies_payload.update(
-                        {
-                            "patientid": self.patient_obj,
-                            "created_date": formatted_date,
-                            "severity": severity,
-                            "reaction": reaction,
-                        }
-                    )
-                    exists = PatientAllergyModel.objects.filter(
-                        patient=self.patient_obj, name=allergies_payload["name"]
-                    ).exists()
-                    if not exists:
-                        super().add_allergies(**allergies_payload)
-                self.destination_response.update(
-                    {"message": "Allergies imported successfully", "statuscode": 200}
-                )
-
-        else:
-            self.destination_response.update(
-                {"erromsg": allergies_response, "status_code": status_code}
-            )
-        return self.destination_response
-
-    def create_medications_entries(self):
-        patient_chart = Chart(self.customer_id, self.tenant_name, self.source_json)
-        patient_chart.authenticate()
-        self.destination_json["patient"] = self.patient_obj.ehr_id
-
-        medications_response, status_code = patient_chart.get_patient_medication(
-            patient_chart.practice_id, **self.destination_json
-        )
-
-        if status_code == 200 and medications_response.get("entry"):
-            for medication in medications_response.get("entry"):
-                resource = medication.get("resource", {})
-                dosage = resource.get("dosage", {})
-                route_text = dosage.get("route", {}).get("text", "").lower()
-
-                medication_payload = {
-                    "patientid": self.patient_obj,
-                    "status": "historical"
-                    if resource.get("status") == "completed"
-                    else "active",
-                }
-
-                # Set route
-                route_map = {
-                    "iv": "Intravenous",
-                    "im": "Intramuscular",
-                    "oral": "Oral",
-                }
-                medication_payload["route"] = route_map.get(route_text)
-
-                # Set medication name
-                med_codeable = resource.get("medicationCodeableConcept", {})
-                medication_payload["name"] = med_codeable.get("text")
-
-                # Set dose + unit
-                dose = dosage.get("dose", {})
-                medication_payload["unit"] = dose.get("code")
-                medication_payload["sig"] = dose.get("value")
-
-                # Save medication
-                super().add_medications(**medication_payload)
-            self.destination_response.update(
-                {
-                    "message": "Medications imported successfully",
-                    "statuscode": 200,
-                }
-            )
-
-        else:
-            self.destination_response.update(
-                {"erromsg": medications_response, "status_code": status_code}
-            )
-        return self.destination_response
-
-    def create_conditions_entries(self):
-        patient_chart = Chart(self.customer_id, self.tenant_name, self.source_json)
-        patient_chart.authenticate()
-        self.destination_json["patient"] = self.patient_obj.ehr_id
-        self.destination_json["category"] = "problem-list-item"
-        (
-            conditions_response,
-            status_code,
-        ) = patient_chart.get_patient_diagnoses(
-            patient_chart.practice_id, **self.destination_json
-        )
-        if status_code == 200:
-            if conditions_response.get("total") > 0:
-                for single_record in conditions_response.get("entry"):
-                    condition_payload = {}
-                    if single_record.get("resource").get("code"):
-                        if single_record.get("resource").get("code").get("coding"):
-                            for single_code in (
-                                single_record.get("resource").get("code").get("coding")
-                            ):
-                                if (
-                                    single_code.get("system")
-                                    == "http://hl7.org/fhir/sid/icd-10-cm"
-                                ):
-                                    ehr_icd_code = single_code.get("code")
-                                    ehr_icd_name = single_code.get("display")
-                                    existing_code_name = Condition.objects.filter(
-                                        title=ehr_icd_name
-                                    ).first()
-                                    if existing_code_name:
-                                        condition_payload[
-                                            "condition"
-                                        ] = existing_code_name
-
-                                    else:
-                                        new_code_name = Condition.objects.create(
-                                            title=ehr_icd_name,
-                                        )
-                                        condition_payload["condition"] = new_code_name
-                                    if single_record.get("resource").get(
-                                        "recordedDate"
-                                    ):
-                                        converted_date = datetime.fromisoformat(
-                                            single_record.get("resource").get(
-                                                "recordedDate"
-                                            )
-                                        )
-                                        condition_payload[
-                                            "start_date"
-                                        ] = converted_date.strftime("%Y-%m-%d")
-
-                                    else:
-                                        condition_payload["start_date"] = None
-                                    existing_icd_code = ICDCode.objects.filter(
-                                        code=ehr_icd_code
-                                    ).first()
-                                    if existing_icd_code:
-                                        condition_payload["icdcode"] = existing_icd_code
-
-                                    else:
-                                        new_icd_code = ICDCode.objects.create(
-                                            title=ehr_icd_name,
-                                            code=ehr_icd_code,
-                                        )
-                                        condition_payload["icdcode"] = new_icd_code
-                                    condition_payload["patientid"] = self.patient_obj
-
-                                    if single_record["resource"]["category"][0][
-                                        "text"
-                                    ] in ["Problem List Item", "Encounter Diagnosis"]:
-                                        exists = PatientCondition.objects.filter(
-                                            patient=self.patient_obj,
-                                            condition__title=condition_payload[
-                                                "condition"
-                                            ].title,
-                                        ).exists()
-                                        if not exists:
-                                            super().add_conditions(**condition_payload)
-        else:
-            self.destination_response.update(
-                {"conditions": conditions_response, "status_code": status_code}
-            )
-        return self.destination_response
-
-    def extract_medications(self, xml_string):
-        ns = {"hl7": "urn:hl7-org:v3"}
-        medications = []
-
-        try:
-            root = ET.fromstring(xml_string)
-
-            # Find all medication entries using the LOINC code "10160-0" which maps to Medications
-            for section in root.findall(".//hl7:section", ns):
-                code = section.find("hl7:code", ns)
-                if code is not None and code.attrib.get("code") == "10160-0":
-                    # Now process medication table under this section
-                    rows = section.findall(".//hl7:table//hl7:tbody//hl7:tr", ns)
-                    for row in rows:
-                        cells = row.findall("hl7:td", ns)
-                        if len(cells) >= 6:
-                            medication = {
-                                "name": cells[0].text.strip()
-                                if cells[0].text
-                                else None,
-                                "comment": cells[1].text.strip()
-                                if cells[1].text
-                                else None,
-                                "notes": cells[2].text.strip()
-                                if cells[2].text
-                                else None,
-                                "created_date": cells[3].text.strip()
-                                if cells[3].text
-                                else None,
-                                "deleted_date": cells[4].text.strip()
-                                if cells[4].text
-                                else None,
-                                "status": cells[5].text.strip()
-                                if cells[5].text
-                                else None,
-                            }
-                            medications.append(medication)
-                    break
-        except Exception as e:
-            print(f"Error while parsing XML: {str(e)}")
-        return medications
-
-    def medication_from_ccda(self):
-        patient_ccda = DocumentReference(
-            self.customer_id, self.tenant_name, self.source_json
-        )
-        patient_ccda.authenticate()
-
-        self.destination_json["category"] = "clinical-note"
-        self.destination_json["patientid"] = self.patient_obj.ehr_id
-        patient_ccda_record, status_code = patient_ccda.search_patient_documents(
-            patient_ccda.practice_id, **self.destination_json
-        )
-        actual_medication = None
-        if status_code == 200:
-            if patient_ccda_record.get("total") >= 1:
-                ccda_entries = patient_ccda_record.get("entry")
-                if ccda_entries:
-                    for single_ccda in ccda_entries:
-                        data = (
-                            single_ccda.get("resource").get("data")
-                            if single_ccda.get("resource")
-                            else None
-                        )
-                        if data is not None:
-                            decoded_bytes = base64.b64decode(data)
-                            xml_string = decoded_bytes.decode("utf-8")
-                            actual_medication = self.extract_medications(xml_string)
-
+            idtype = self.source_json.get("Patient").get("Identifiers")[0].get("IDType")
+            if idtype == "EHRID":
+                self.patient_id = self.source_json.get("Patient").get("Identifiers")[0].get("ID")
             else:
-                self.destination_response.update(
-                    {"errormessage": "No medication found"}
-                )
-                self.destination_response.update({"statuscode": status_code})
-                return self.destination_response
-            for single_medication in actual_medication:
-                single_medication["patientid"] = self.patient_obj
-                single_medication["status"] = (
-                    "active"
-                    if single_medication.get("status") == "In Progress"
-                    else "historical"
-                )
-                if single_medication.get("created_date"):
-                    single_medication["created_date"] = datetime.strptime(
-                        single_medication["created_date"], "%m/%d/%Y"
+                return Response({"error": "Invalid ID Type"}, status=status.HTTP_400_BAD_REQUEST)
+            patients_chart = Chart(self.connection)
+            patients_chart.authenticate()
+            for event in events:
+                event = event.lower()
+                # Demographics Data (also handles "patient" event)
+                if event == "demographics" or event == "patient" or event == "all":
+                    demographics_json = {
+                        "Header": {
+                            "Patient": {
+                                "Identifiers": [{}],
+                                "Demographics": {
+                                    "EmailAddresses": [{}],
+                                    "PhoneNumber": {},
+                                    "Address": {},
+                                },
+                            }
+                        }
+                    }
+                    (
+                        demographics_response,
+                        status_code,
+                    ) = patients_chart.get_patient_demographics(self.patient_id)
+                    print("demographics_response", demographics_response, status_code)
+
+                    # Add raw response if Test mode is enabled
+                    if self.source_json.get("Meta", {}).get("Test"):
+                        self.destination_response["Meta"]["Raw"].append(
+                            demographics_response
+                        )
+
+                    if status_code == 200:
+                        # Extract Patient resource from FHIR Bundle
+                        patient_resource = None
+                        if isinstance(demographics_response, dict):
+                            if demographics_response.get("resourceType") == "Bundle":
+                                entries = demographics_response.get("entry", [])
+                                if entries and len(entries) > 0:
+                                    patient_resource = entries[0].get("resource", {})
+                            elif demographics_response.get("resourceType") == "Patient":
+                                patient_resource = demographics_response
+
+                        if patient_resource:
+                            # Extract identifiers
+                            identifiers = patient_resource.get("identifier", [])
+                            if identifiers:
+                                # Use the first identifier with 'usual' use, or first one
+                                usual_id = next((id for id in identifiers if id.get("use") == "usual"), identifiers[0] if identifiers else None)
+                                if usual_id:
+                                    demographics_json["Header"]["Patient"]["Identifiers"][0]["ID"] = usual_id.get("value")
+                                    demographics_json["Header"]["Patient"]["Identifiers"][0]["IDType"] = "EHRID"
+
+                            # Extract name
+                            names = patient_resource.get("name", [])
+                            if names:
+                                name = names[0]  # Use first name entry
+                                given_names = name.get("given", [])
+                                demographics_json["Header"]["Patient"]["Demographics"]["FirstName"] = given_names[0] if len(given_names) > 0 else None
+                                demographics_json["Header"]["Patient"]["Demographics"]["MiddleName"] = given_names[1] if len(given_names) > 1 else None
+                                demographics_json["Header"]["Patient"]["Demographics"]["LastName"] = name.get("family")
+
+                            # Extract DOB
+                            birth_date = patient_resource.get("birthDate")
+                            if birth_date:
+                                demographics_json["Header"]["Patient"]["Demographics"]["DOB"] = birth_date
+
+                            # Extract gender
+                            gender = patient_resource.get("gender", "").lower()
+                            if gender == "male" or gender == "m":
+                                demographics_json["Header"]["Patient"]["Demographics"]["Sex"] = "Male"
+                            elif gender == "female" or gender == "f":
+                                demographics_json["Header"]["Patient"]["Demographics"]["Sex"] = "Female"
+
+                            # Extract telecom (phone and email)
+                            telecom = patient_resource.get("telecom", [])
+                            for contact in telecom:
+                                system = contact.get("system", "")
+                                value = contact.get("value", "")
+                                use = contact.get("use", "")
+
+                                if system == "phone":
+                                    if use == "home":
+                                        demographics_json["Header"]["Patient"]["Demographics"]["PhoneNumber"]["Home"] = value
+                                    elif use == "mobile":
+                                        demographics_json["Header"]["Patient"]["Demographics"]["PhoneNumber"]["Mobile"] = value
+                                elif system == "email":
+                                    demographics_json["Header"]["Patient"]["Demographics"]["EmailAddresses"][0]["Address"] = value
+
+                            # Extract address
+                            addresses = patient_resource.get("address", [])
+                            if addresses:
+                                address = addresses[0]  # Use first address
+                                address_lines = address.get("line", [])
+                                demographics_json["Header"]["Patient"]["Demographics"]["Address"]["StreetAddress"] = address_lines[0] if address_lines else None
+                                demographics_json["Header"]["Patient"]["Demographics"]["Address"]["City"] = address.get("city")
+                                demographics_json["Header"]["Patient"]["Demographics"]["Address"]["State"] = address.get("state")
+                                demographics_json["Header"]["Patient"]["Demographics"]["Address"]["ZIP"] = address.get("postalCode")
+                                demographics_json["Header"]["Patient"]["Demographics"]["Address"]["Country"] = address.get("country")
+
+                            # Extract race and ethnicity from extensions (if available)
+                            extensions = patient_resource.get("extension", [])
+                            for ext in extensions:
+                                url = ext.get("url", "")
+                                if "us-core-race" in url:
+                                    race_extensions = ext.get("extension", [])
+                                    for race_ext in race_extensions:
+                                        if race_ext.get("url") == "text":
+                                            demographics_json["Header"]["Patient"]["Demographics"]["Race"] = race_ext.get("valueString")
+                                elif "us-core-ethnicity" in url:
+                                    ethnicity_extensions = ext.get("extension", [])
+                                    for eth_ext in ethnicity_extensions:
+                                        if eth_ext.get("url") == "text":
+                                            demographics_json["Header"]["Patient"]["Demographics"]["Ethnicity"] = eth_ext.get("valueString")
+
+                        self.destination_response.update(demographics_json)
+                        print("destination_response", self.destination_response)
+                        print("status_code", status_code)
+                    else:
+                        self.destination_response.update(demographics_response)
+                        self.destination_response.update({"statuscode": status_code})
+                # Allergies Data
+                if event == "allergies" or event == "all":
+                    allergies_json = {"Allergies": []}
+                    (
+                        allergies_response,
+                        status_code,
+                    ) = patients_chart.get_patient_allergy(self.patient_id)
+                    print("allergies_response", allergies_response, status_code)
+                    # Add raw response if Test mode is enabled
+                    if self.source_json.get("Meta", {}).get("Test"):
+                        self.destination_response["Meta"]["Raw"].append(
+                            allergies_response
+                        )
+                    if status_code == 200:
+                        # Check if response is a FHIR Bundle
+                        if (
+                            isinstance(allergies_response, dict)
+                            and allergies_response.get("resourceType") == "Bundle"
+                        ):
+                            entries = allergies_response.get("entry", [])
+                            # Handle empty Bundle (total: 0)
+                            if allergies_response.get("total", 0) == 0 or not entries:
+                                # Return empty Allergies array
+                                self.destination_response.update(allergies_json)
+                            else:
+                                # Process each AllergyIntolerance resource from Bundle
+                                for entry_item in entries:
+                                    allergy_resource = entry_item.get("resource", {})
+                                    if (
+                                        not allergy_resource
+                                        or allergy_resource.get("resourceType")
+                                        != "AllergyIntolerance"
+                                    ):
+                                        continue
+
+                                    # Extract Type/Substance from code
+                                    code = allergy_resource.get("code", {})
+                                    codings = code.get("coding", [])
+                                    substance_code = None
+                                    substance_name = None
+                                    substance_code_system = None
+                                    allergen_code = None
+                                    allergen_name = None
+                                    allergen_code_system = None
+
+                                    # Get substance name from text as fallback
+                                    substance_name = code.get("text")
+
+                                    if codings:
+                                        # Prefer RxNorm coding if available, otherwise use first
+                                        rxnorm_coding = next(
+                                            (c for c in codings if "rxnorm" in c.get("system", "").lower()),
+                                            None
+                                        )
+                                        preferred_coding = rxnorm_coding if rxnorm_coding else codings[0]
+
+                                        substance_code = preferred_coding.get("code")
+                                        substance_code_system = preferred_coding.get("system")
+                                        # Use display from coding, fallback to text from code
+                                        substance_name = preferred_coding.get("display") or code.get("text") or substance_name
+                                        allergen_code = substance_code
+                                        allergen_name = substance_name
+                                        allergen_code_system = substance_code_system
+                                    elif substance_name:
+                                        # If no coding but we have text, use that
+                                        allergen_name = substance_name
+
+                                    # Extract allergy type from category or type field
+                                    categories = allergy_resource.get("category", [])
+                                    allergy_type = allergy_resource.get("type", "")
+                                    if categories:
+                                        # Use first category
+                                        allergy_type = categories[0] if isinstance(categories, list) else categories
+
+                                    # Extract reactions
+                                    reactions = []
+                                    fhir_reactions = allergy_resource.get(
+                                        "reaction", []
+                                    )
+                                    for fhir_reaction in fhir_reactions:
+                                        reaction_manifestations = fhir_reaction.get(
+                                            "manifestation", []
+                                        )
+                                        for manifestation in reaction_manifestations:
+                                            manifestation_codings = manifestation.get(
+                                                "coding", []
+                                            )
+                                            reaction_code = None
+                                            reaction_name = None
+                                            reaction_code_system = None
+
+                                            # Handle both coded and text-only manifestations
+                                            if manifestation_codings:
+                                                reaction_coding = manifestation_codings[0]
+                                                reaction_code = reaction_coding.get("code")
+                                                reaction_code_system = reaction_coding.get("system")
+                                                reaction_name = reaction_coding.get("display") or manifestation.get("text")
+                                            else:
+                                                # Fallback to text if no coding available
+                                                reaction_name = manifestation.get("text")
+
+                                            severity = fhir_reaction.get("severity", "")
+                                            severity_code = None
+                                            # Map FHIR severity to expected format
+                                            if severity:
+                                                severity_lower = severity.lower()
+                                                if severity_lower == "mild":
+                                                    severity_code = (
+                                                        "255604002"  # Mild SNOMED code
+                                                    )
+                                                elif severity_lower == "moderate":
+                                                    severity_code = "6736007"  # Moderate SNOMED code
+                                                elif severity_lower == "severe":
+                                                    severity_code = (
+                                                        "24484000"  # Severe SNOMED code
+                                                    )
+
+                                            # Only add reaction if we have a name
+                                            if reaction_name:
+                                                reactions.append(
+                                                    {
+                                                        "Code": reaction_code,
+                                                        "CodeSystem": reaction_code_system,
+                                                        "CodeSystemName": None,
+                                                        "Name": reaction_name,
+                                                        "Severity": {
+                                                            "Name": (
+                                                                severity.title()
+                                                                if severity
+                                                                else None
+                                                            ),
+                                                            "Code": severity_code,
+                                                            "CodeSystem": None,
+                                                            "CodeSystemName": None,
+                                                        },
+                                                        "Text": reaction_name if not reaction_code else None,
+                                                    }
+                                                )
+
+                                    # Extract criticality
+                                    criticality = allergy_resource.get(
+                                        "criticality", ""
+                                    )
+
+                                    # Extract dates
+                                    onset_date = None
+                                    if allergy_resource.get("onsetDateTime"):
+                                        onset_date = allergy_resource.get(
+                                            "onsetDateTime"
+                                        )
+                                    elif allergy_resource.get("onsetAge"):
+                                        # Handle age-based onset if needed
+                                        pass
+
+                                    # Extract note/comment
+                                    note = None
+                                    notes = allergy_resource.get("note", [])
+                                    if notes:
+                                        note = (
+                                            notes[0].get("text")
+                                            if isinstance(notes[0], dict)
+                                            else str(notes[0])
+                                        )
+
+                                    # Extract end date from clinicalStatus or recordDate
+                                    end_date = None
+                                    clinical_status = allergy_resource.get(
+                                        "clinicalStatus", {}
+                                    )
+                                    if clinical_status:
+                                        status_codings = clinical_status.get(
+                                            "coding", []
+                                        )
+                                        if status_codings:
+                                            status_code = status_codings[0].get(
+                                                "code", ""
+                                            )
+                                            # If status indicates resolved/inactive
+                                            if status_code in [
+                                                "resolved",
+                                                "inactive",
+                                                "entered-in-error",
+                                            ]:
+                                                # Try to get lastUpdated from meta
+                                                meta = allergy_resource.get("meta", {})
+                                                if meta.get("lastUpdated"):
+                                                    end_date = meta.get("lastUpdated")
+
+                                    # Determine code system name
+                                    code_system_name = None
+                                    if substance_code_system:
+                                        if "rxnorm" in substance_code_system.lower():
+                                            code_system_name = "RxNorm"
+                                        elif "snomed" in substance_code_system.lower():
+                                            code_system_name = "SNOMED CT"
+                                        elif "loinc" in substance_code_system.lower():
+                                            code_system_name = "LOINC"
+
+                                    allergies_json["Allergies"].append(
+                                        {
+                                            "Type": {
+                                                "Code": allergen_code,
+                                                "CodeSystem": allergen_code_system,
+                                                "CodeSystemName": code_system_name,
+                                                "Name": allergen_name or substance_name,
+                                            },
+                                            "Substance": {
+                                                "Code": substance_code,
+                                                "CodeSystem": substance_code_system,
+                                                "CodeSystemName": code_system_name,
+                                                "Name": substance_name,
+                                            },
+                                            "Reaction": reactions if reactions else [],
+                                            "Criticality": {
+                                                "Name": (
+                                                    criticality.title()
+                                                    if criticality
+                                                    else None
+                                                )
+                                            },
+                                            "StartDate": onset_date,
+                                            "EndDate": end_date,
+                                            "Comment": note,
+                                        }
+                                    )
+                                self.destination_response.update(allergies_json)
+                        else:
+                            # Legacy format - try to access allergies key
+                            if (
+                                isinstance(allergies_response, dict)
+                                and "allergies" in allergies_response
+                            ):
+                                for allergy in allergies_response["allergies"]:
+                                    allergies_json["Allergies"].append(
+                                        {
+                                            "Type": {
+                                                "Code": allergy.get("allergenid"),
+                                                "CodeSystem": None,
+                                                "CodeSystemName": None,
+                                                "Name": allergy.get("allergenname"),
+                                            },
+                                            "Substance": {
+                                                "Code": allergy.get("rxnormcode"),
+                                                "CodeSystem": None,
+                                                "CodeSystemName": None,
+                                                "Name": allergy.get(
+                                                    "rxnormdescription"
+                                                ),
+                                            },
+                                            "Reaction": [
+                                                {
+                                                    "Code": reaction.get("snomedcode"),
+                                                    "CodeSystem": None,
+                                                    "CodeSystemName": None,
+                                                    "Name": reaction.get(
+                                                        "reactionname"
+                                                    ),
+                                                    "Severity": {
+                                                        "Name": reaction.get(
+                                                            "severity"
+                                                        ),
+                                                        "Code": reaction.get(
+                                                            "severitysnomedcode"
+                                                        ),
+                                                        "CodeSystem": None,
+                                                        "CodeSystemName": None,
+                                                    },
+                                                    "Text": None,
+                                                }
+                                                for reaction in allergy.get(
+                                                    "reactions", []
+                                                )
+                                            ],
+                                            "Criticality": {
+                                                "Name": allergy.get("criticality")
+                                            },
+                                            "StartDate": allergy.get("onsetdate"),
+                                            "EndDate": allergy.get("deactivatedate"),
+                                            "Comment": allergy.get("note"),
+                                        }
+                                    )
+                                self.destination_response.update(allergies_json)
+                            else:
+                                # Empty response - return empty Allergies array
+                                self.destination_response.update(allergies_json)
+                    else:
+                        self.destination_response.update(allergies_response)
+                        self.destination_response.update({"statuscode": status_code})
+                if event == "medications" or event == "all":
+                    medications_json = {"Medications": []}
+                    medications_response, status_code = (
+                        patients_chart.get_patient_medication(self.patient_id)
                     )
+                    print("medications_response", medications_response, status_code)
+                    # Add raw response if Test mode is enabled
+                    if self.source_json.get("Meta", {}).get("Test"):
+                        self.destination_response["Meta"]["Raw"].append(
+                            medications_response
+                        )
 
-                if single_medication.get("deleted_date"):
-                    single_medication["deleted_date"] = datetime.strptime(
-                        single_medication["deleted_date"], "%m/%d/%Y"
+                    if status_code == 200:
+                        # Check if response is a FHIR Bundle
+                        if (
+                            isinstance(medications_response, dict)
+                            and medications_response.get("resourceType") == "Bundle"
+                        ):
+                            entries = medications_response.get("entry", [])
+                            # Handle empty Bundle (total: 0)
+                            if medications_response.get("total", 0) == 0 or not entries:
+                                # Return empty Medications array
+                                self.destination_response.update(medications_json)
+                            else:
+                                # Process each medication resource from Bundle
+                                # Can be MedicationAdministration, MedicationStatement, or MedicationRequest
+                                for entry_item in entries:
+                                    medication_resource = entry_item.get("resource", {})
+                                    resource_type = medication_resource.get("resourceType", "")
+                                    if (
+                                        not medication_resource
+                                        or resource_type not in [
+                                            "MedicationAdministration",
+                                            "MedicationStatement",
+                                            "MedicationRequest"
+                                        ]
+                                    ):
+                                        continue
+
+                                    # Extract encounter ID from context
+                                    encounter_id = None
+                                    context = medication_resource.get("context", {})
+                                    if isinstance(context, dict) and context.get(
+                                        "reference"
+                                    ):
+                                        encounter_ref = context.get("reference", "")
+                                        encounter_id = (
+                                            encounter_ref.split("/")[-1]
+                                            if "/" in encounter_ref
+                                            else None
+                                        )
+
+                                    # Extract medication information
+                                    # Can be medicationCodeableConcept or medicationReference
+                                    medication_codeable = medication_resource.get(
+                                        "medicationCodeableConcept", {}
+                                    )
+                                    medication_reference = medication_resource.get(
+                                        "medicationReference", {}
+                                    )
+
+                                    medication_name = medication_codeable.get("text") if medication_codeable else None
+                                    medication_code = None
+                                    medication_code_system = None
+
+                                    # Extract from coding array if available
+                                    if medication_codeable:
+                                        codings = medication_codeable.get("coding", [])
+                                        if codings:
+                                            # Prefer RxNorm coding if available, otherwise use first
+                                            rxnorm_coding = next(
+                                                (c for c in codings if "rxnorm" in c.get("system", "").lower()),
+                                                None
+                                            )
+                                            preferred_coding = rxnorm_coding if rxnorm_coding else codings[0]
+                                            medication_code = preferred_coding.get("code")
+                                            medication_code_system = preferred_coding.get("system")
+                                            medication_name = preferred_coding.get("display") or medication_name or medication_codeable.get("text")
+
+                                    # If medication is a reference, extract display name
+                                    if medication_reference and not medication_name:
+                                        medication_name = medication_reference.get("display")
+
+                                    # Extract dosage information
+                                    # MedicationAdministration uses "dosage" (single object)
+                                    # MedicationStatement uses "dosage" (array)
+                                    # MedicationRequest uses "dosageInstruction" (array)
+                                    dosage = medication_resource.get("dosage", {})
+                                    dosage_instruction = medication_resource.get("dosageInstruction", [])
+
+                                    # Handle different resource types
+                                    dosage_obj = None
+                                    if resource_type == "MedicationRequest" and dosage_instruction:
+                                        # Use first dosage instruction
+                                        dosage_obj = dosage_instruction[0] if isinstance(dosage_instruction, list) else dosage_instruction
+                                    elif resource_type == "MedicationStatement" and isinstance(dosage, list) and len(dosage) > 0:
+                                        # Use first dosage from array
+                                        dosage_obj = dosage[0]
+                                    elif dosage and isinstance(dosage, dict):
+                                        # Single dosage object
+                                        dosage_obj = dosage
+
+                                    dose_value = None
+                                    dose_unit = None
+                                    route_name = None
+
+                                    if dosage_obj:
+                                        # Extract dose
+                                        dose = dosage_obj.get("doseAndRate", [{}])[0].get("doseQuantity", {}) if isinstance(dosage_obj.get("doseAndRate"), list) else dosage_obj.get("dose", {})
+                                        if dose:
+                                            if isinstance(dose, dict):
+                                                dose_value = dose.get("value")
+                                                dose_unit = dose.get("unit")
+                                            else:
+                                                dose_value = dose
+
+                                        # Extract route
+                                        route = dosage_obj.get("route", {})
+                                        if route:
+                                            route_codings = route.get("coding", [])
+                                            if route_codings:
+                                                route_name = route_codings[0].get(
+                                                    "display"
+                                                ) or route.get("text")
+                                            else:
+                                                route_name = route.get("text")
+
+                                    # Extract status
+                                    status = (
+                                        medication_resource.get("status", "").upper()
+                                        if medication_resource.get("status")
+                                        else None
+                                    )
+
+                                    # Extract effective date (varies by resource type)
+                                    effective_date = None
+                                    if resource_type == "MedicationAdministration":
+                                        effective_date = medication_resource.get("effectiveDateTime")
+                                    elif resource_type == "MedicationStatement":
+                                        effective_date = medication_resource.get("effectiveDateTime")
+                                        if not effective_date:
+                                            effective_period = medication_resource.get("effectivePeriod", {})
+                                            effective_date = effective_period.get("start") if effective_period else None
+                                    elif resource_type == "MedicationRequest":
+                                        effective_date = medication_resource.get("authoredOn")
+                                        if not effective_date:
+                                            occurrence = medication_resource.get("occurrenceDateTime")
+                                            effective_date = occurrence
+
+                                    # Extract medication ID
+                                    medication_id = medication_resource.get("id", "")
+
+                                    # Determine code system name
+                                    code_system_name = None
+                                    if medication_code_system:
+                                        if "rxnorm" in medication_code_system.lower():
+                                            code_system_name = "RxNorm"
+                                        elif "snomed" in medication_code_system.lower():
+                                            code_system_name = "SNOMED CT"
+                                        elif "ndc" in medication_code_system.lower():
+                                            code_system_name = "NDC"
+
+                                    medications_json["Medications"].append(
+                                        {
+                                            "Identifiers": (
+                                                [
+                                                    {
+                                                        "ID": encounter_id,
+                                                        "IDType": "EncounterID",
+                                                    }
+                                                ]
+                                                if encounter_id
+                                                else []
+                                            ),
+                                            "Dose": {
+                                                "Quantity": dose_value,
+                                                "Units": dose_unit,
+                                            },
+                                            "Route": {"Name": route_name},
+                                            "Status": status,
+                                            "StartDate": effective_date,
+                                            "EndDate": None,  # MedicationAdministration doesn't have end date
+                                            "Frequency": {
+                                                "Period": None,  # Not available in MedicationAdministration
+                                                "Unit": None,
+                                            },
+                                            "NumberOfRefillsRemaining": None,  # Not applicable for MedicationAdministration
+                                            "Product": {
+                                                "Code": medication_code or medication_id,
+                                                "CodeSystem": medication_code_system,
+                                                "CodeSystemName": code_system_name,
+                                                "Name": medication_name,
+                                            },
+                                        }
+                                    )
+
+                                self.destination_response.update(medications_json)
+                                print("medications_json updated", medications_json)
+                        else:
+                            # Legacy format - try to access medications key
+                            if (
+                                isinstance(medications_response, dict)
+                                and "medications" in medications_response
+                            ):
+                                for medications in medications_response["medications"]:
+                                    for medication in medications:
+                                        medications_json["Medications"].append(
+                                            {
+                                                "Identifiers": [
+                                                    {
+                                                        "ID": medication.get(
+                                                            "encounterid"
+                                                        ),
+                                                        "IDType": "EncounterID",
+                                                    }
+                                                ],
+                                                "Dose": {
+                                                    "Quantity": (
+                                                        medication.get(
+                                                            "structuredsig"
+                                                        ).get("dosagequantityvalue")
+                                                        if medication.get(
+                                                            "structuredsig"
+                                                        )
+                                                        is not None
+                                                        else None
+                                                    ),
+                                                    "Units": (
+                                                        medication.get(
+                                                            "structuredsig"
+                                                        ).get("dosagequantityunit")
+                                                        if medication.get(
+                                                            "structuredsig"
+                                                        )
+                                                        is not None
+                                                        else None
+                                                    ),
+                                                },
+                                                "Route": {
+                                                    "Name": medication.get("route")
+                                                },
+                                                "Status": medication.get("status"),
+                                                "StartDate": (
+                                                    (
+                                                        [
+                                                            (
+                                                                md_start_date[
+                                                                    "eventdate"
+                                                                ]
+                                                                if md_start_date["type"]
+                                                                == "START"
+                                                                else None
+                                                            )
+                                                            for md_start_date in medication.get(
+                                                                "events", []
+                                                            )
+                                                        ]
+                                                    )[0]
+                                                    if medication.get("events")
+                                                    else None
+                                                ),
+                                                "EndDate": (
+                                                    (
+                                                        [
+                                                            (
+                                                                md_start_date[
+                                                                    "eventdate"
+                                                                ]
+                                                                if md_start_date["type"]
+                                                                == "END"
+                                                                else None
+                                                            )
+                                                            for md_start_date in medication.get(
+                                                                "events", []
+                                                            )
+                                                        ]
+                                                    )[0]
+                                                    if medication.get("events")
+                                                    else None
+                                                ),
+                                                "Frequency": {
+                                                    "Period": (
+                                                        medication.get(
+                                                            "structuredsig"
+                                                        ).get("dosagefrequencyvalue")
+                                                        if medication.get(
+                                                            "structuredsig"
+                                                        )
+                                                        is not None
+                                                        else None
+                                                    ),
+                                                    "Unit": (
+                                                        medication.get(
+                                                            "structuredsig"
+                                                        ).get("dosagefrequencyunit")
+                                                        if medication.get(
+                                                            "structuredsig"
+                                                        )
+                                                        is not None
+                                                        else None
+                                                    ),
+                                                },
+                                                "NumberOfRefillsRemaining": medication.get(
+                                                    "refillsallowed"
+                                                ),
+                                                "Product": {
+                                                    "Code": medication.get(
+                                                        "medicationid"
+                                                    ),
+                                                    "Name": medication.get(
+                                                        "medication"
+                                                    ),
+                                                },
+                                            }
+                                        )
+                                self.destination_response.update(medications_json)
+                            else:
+                                # Empty response - return empty Medications array
+                                self.destination_response.update(medications_json)
+                    else:
+                        self.destination_response.update(medications_response)
+                        self.destination_response.update({"statuscode": status_code})
+                if event == "vitals" or event == "all":
+                    if self.source_json.get("StartDate") and self.source_json.get(
+                        "EndDate"
+                    ):
+                        self.destination_json["startdate"] = datetime.strptime(
+                            self.source_json.get("StartDate"),
+                            "%Y-%m-%d",
+                        ).strftime("%m/%d/%Y")
+                        self.destination_json["enddate"] = datetime.strptime(
+                            self.source_json.get("EndDate"),
+                            "%Y-%m-%d",
+                        ).strftime("%m/%d/%Y")
+
+                    vitals_json = {"VitalSigns": []}
+                    vitals_response, status_code = patients_chart.get_patient_vitals(
+                        self.patient_id
                     )
-                exists = PatientMedicationModel.objects.filter(
-                    patient=self.patient_obj, medicine=single_medication["name"]
-                ).exists()
-                if not exists:
-                    super().add_medications(**single_medication)
-        else:
-            self.destination_response.update(
-                {"medication response": patient_ccda_record, "status_code": status_code}
-            )
-        return self.destination_response
+                    if self.source_json["Meta"].get("Test"):
+                        self.destination_response["Meta"]["Raw"].append(vitals_response)
+                    if status_code == 200:
+                        # Check if response is a FHIR Bundle
+                        if (
+                            isinstance(vitals_response, dict)
+                            and vitals_response.get("resourceType") == "Bundle"
+                        ):
+                            entries = vitals_response.get("entry", [])
+                            # Handle empty Bundle (total: 0)
+                            if vitals_response.get("total", 0) == 0 or not entries:
+                                # Return empty VitalSigns array
+                                self.destination_response.update(vitals_json)
+                            else:
+                                # Group observations by effectiveDateTime (same time = same reading session)
+                                vitals_by_datetime = {}
 
-    def create_vitals_entries(self):
-        patient_chart = Chart(self.customer_id, self.tenant_name, self.source_json)
-        patient_chart.authenticate()
-        self.destination_json["category"] = "vital-signs"
-        self.destination_json["patient"] = self.patient_obj.ehr_id
-        vitals_response, status_code = patient_chart.get_patient_vitals(
-            patient_chart.practice_id, **self.destination_json
-        )
-        if status_code == 200:
-            if vitals_response.get("total") > 0:
-                vital_obj = {}
-                for vital in vitals_response.get("entry"):
-                    vital_name = vital.get("resource").get("code").get("text")
-                    vital_quantity = (
-                        vital.get("resource").get("valueQuantity")
-                        if vital.get("resource").get("valueQuantity")
-                        else None
-                    )
-                    if "temperature" in vital_name.lower():
-                        vital_obj["type"] = "body_temperature"
-                        vital_obj["created_date"] = vital.get("resource").get(
-                            "effectiveDateTime"
-                        )
-                        vital_obj["patient"] = self.patient_obj
+                                for entry_item in entries:
+                                    observation_resource = entry_item.get(
+                                        "resource", {}
+                                    )
+                                    if (
+                                        not observation_resource
+                                        or observation_resource.get("resourceType")
+                                        != "Observation"
+                                    ):
+                                        continue
 
-                        vital_obj["value"] = (
-                            (
-                                (
-                                    vital.get("resource")
-                                    .get("valueQuantity")
-                                    .get("value")
-                                    - 32
-                                )
-                                * 5
-                                / 9
-                            )
-                            if vital_quantity and vital_quantity.get("value")
-                            else 0.0
-                        )
+                                    # Extract datetime for grouping
+                                    effective_datetime = observation_resource.get(
+                                        "effectiveDateTime"
+                                    )
+                                    if not effective_datetime:
+                                        continue
 
-                        vital_obj["diastolic"] = None
-                        vital_obj["units"] = "c"
-                        recorded_at = parse_datetime(vital_obj["created_date"])
-                        exists = PatientVitalModel.objects.filter(
-                            patient=self.patient_obj,
-                            type=vital_obj["type"],
-                            value=vital_obj["value"],
-                            recorded_at=recorded_at,
-                        ).exists()
-                        if not exists:
-                            super().add_vitals(**vital_obj)
+                                    # Initialize group if not exists
+                                    if effective_datetime not in vitals_by_datetime:
+                                        vitals_by_datetime[effective_datetime] = {
+                                            "identifiers": [],
+                                            "datetime": effective_datetime,
+                                            "observations": [],
+                                        }
 
-                    if vital_name == "BMI":
-                        vital_obj["type"] = "bmi"
-                        vital_obj["created_date"] = vital.get("resource").get(
-                            "effectiveDateTime"
-                        )
-                        vital_obj["patient"] = self.patient_obj
-                        vital_obj["value"] = (
-                            (vital.get("resource").get("valueQuantity").get("value"))
-                            if vital_quantity and vital_quantity.get("value")
-                            else 0.0
-                        )
+                                    # Extract observation ID
+                                    observation_id = observation_resource.get("id", "")
 
-                        vital_obj["diastolic"] = None
-                        vital_obj["units"] = (
-                            vital_quantity.get("unit")
-                            if vital_quantity and vital_quantity.get("unit")
-                            else ""
-                        )
-                        recorded_at = parse_datetime(vital_obj["created_date"])
-                        exists = PatientVitalModel.objects.filter(
-                            patient=self.patient_obj,
-                            type=vital_obj["type"],
-                            value=vital_obj["value"],
-                            recorded_at=recorded_at,
-                        ).exists()
-                        if not exists:
-                            super().add_vitals(**vital_obj)
+                                    # Extract encounter reference
+                                    encounter_ref = observation_resource.get(
+                                        "encounter", {}
+                                    )
+                                    encounter_id = None
+                                    if isinstance(encounter_ref, dict):
+                                        encounter_id = (
+                                            encounter_ref.get("reference", "").split(
+                                                "/"
+                                            )[-1]
+                                            if encounter_ref.get("reference")
+                                            else None
+                                        )
 
-                    if "Height" in vital_name:
-                        vital_obj["type"] = "height"
-                        vital_obj["created_date"] = vital.get("resource").get(
-                            "effectiveDateTime"
-                        )
-                        vital_obj["patient"] = self.patient_obj
-                        vital_obj["value"] = (
-                            (
-                                vital.get("resource").get("valueQuantity").get("value")
-                                / 39.37
-                            )
-                            if vital_quantity and vital_quantity.get("value")
-                            else 0.0
-                        )
+                                    # Add identifiers
+                                    if observation_id:
+                                        vitals_by_datetime[effective_datetime][
+                                            "identifiers"
+                                        ].append(
+                                            {"ID": observation_id, "IDType": "VitalID"}
+                                        )
+                                    if encounter_id:
+                                        vitals_by_datetime[effective_datetime][
+                                            "identifiers"
+                                        ].append(
+                                            {
+                                                "ID": encounter_id,
+                                                "IDType": "EncounterID",
+                                            }
+                                        )
 
-                        vital_obj["diastolic"] = None
-                        vital_obj["units"] = "m"
-                        recorded_at = parse_datetime(vital_obj["created_date"])
-                        exists = PatientVitalModel.objects.filter(
-                            patient=self.patient_obj,
-                            type=vital_obj["type"],
-                            value=vital_obj["value"],
-                            recorded_at=recorded_at,
-                        ).exists()
-                        if not exists:
-                            super().add_vitals(**vital_obj)
+                                    # Extract code information
+                                    code = observation_resource.get("code", {})
+                                    code_codings = code.get("coding", [])
+                                    code_value = None
+                                    code_system = None
+                                    code_display = code.get("text") or None
 
-                    if vital_name == "Blood pressure":
-                        if vital.get("resource").get("component"):
-                            for single_vital in vital.get("resource").get("component"):
-                                if single_vital.get("code").get("coding"):
-                                    for single_coding_vital in single_vital.get(
-                                        "code"
-                                    ).get("coding"):
-                                        vital_quantity = single_vital.get(
+                                    if code_codings:
+                                        first_coding = code_codings[0]
+                                        code_value = first_coding.get("code")
+                                        code_system = first_coding.get("system")
+                                        if not code_display:
+                                            code_display = first_coding.get("display")
+
+                                    # Extract value
+                                    value = None
+                                    unit = None
+
+                                    if observation_resource.get("valueQuantity"):
+                                        value_quantity = observation_resource.get(
                                             "valueQuantity"
                                         )
-                                        if (
-                                            single_coding_vital.get("display")
-                                            == "Systolic blood pressure"
-                                        ):
-                                            vital_obj["value"] = (
-                                                single_vital.get("valueQuantity").get(
-                                                    "value"
+                                        value = value_quantity.get("value")
+                                        unit = value_quantity.get("unit")
+                                    elif observation_resource.get("valueString"):
+                                        value = observation_resource.get("valueString")
+                                        unit = None
+
+                                    # Handle simple observations (single value)
+                                    if value is not None:
+                                        vitals_by_datetime[effective_datetime][
+                                            "observations"
+                                        ].append(
+                                            {
+                                                "DateTime": effective_datetime,
+                                                "Value": (
+                                                    str(value).strip()
+                                                    if value
+                                                    else None
+                                                ),
+                                                "Units": unit,
+                                                "TargetSite": {
+                                                    "Code": code_value,
+                                                    "CodeSystem": code_system,
+                                                    "CodeSystemName": None,
+                                                    "Name": code_display,
+                                                },
+                                            }
+                                        )
+
+                                    # Handle complex observations with components (e.g., blood pressure, pulse oximetry)
+                                    components = observation_resource.get(
+                                        "component", []
+                                    )
+                                    for component in components:
+                                        component_code = component.get("code", {})
+                                        component_codings = component_code.get(
+                                            "coding", []
+                                        )
+                                        component_code_value = None
+                                        component_code_system = None
+                                        component_code_display = (
+                                            component_code.get("text") or None
+                                        )
+
+                                        if component_codings:
+                                            first_component_coding = component_codings[
+                                                0
+                                            ]
+                                            component_code_value = (
+                                                first_component_coding.get("code")
+                                            )
+                                            component_code_system = (
+                                                first_component_coding.get("system")
+                                            )
+                                            if not component_code_display:
+                                                component_code_display = (
+                                                    first_component_coding.get(
+                                                        "display"
+                                                    )
                                                 )
-                                                if vital_quantity
-                                                and vital_quantity.get("value")
-                                                else 0.0
+
+                                        component_value = None
+                                        component_unit = None
+
+                                        if component.get("valueQuantity"):
+                                            component_value_quantity = component.get(
+                                                "valueQuantity"
+                                            )
+                                            component_value = (
+                                                component_value_quantity.get("value")
+                                            )
+                                            component_unit = (
+                                                component_value_quantity.get("unit")
+                                            )
+                                        elif component.get("valueString"):
+                                            component_value = component.get(
+                                                "valueString"
                                             )
 
-                                        if (
-                                            single_coding_vital.get("display")
-                                            == "Diastolic blood pressure"
-                                        ):
-                                            vital_obj["diastolic"] = (
-                                                single_vital.get("valueQuantity").get(
-                                                    "value"
-                                                )
-                                                if vital_quantity
-                                                and vital_quantity.get("value")
-                                                else 0.0
+                                        if component_value is not None:
+                                            vitals_by_datetime[effective_datetime][
+                                                "observations"
+                                            ].append(
+                                                {
+                                                    "DateTime": effective_datetime,
+                                                    "Value": (
+                                                        str(component_value).strip()
+                                                        if component_value
+                                                        else None
+                                                    ),
+                                                    "Units": component_unit,
+                                                    "TargetSite": {
+                                                        "Code": component_code_value,
+                                                        "CodeSystem": component_code_system,
+                                                        "CodeSystemName": None,
+                                                        "Name": component_code_display,
+                                                    },
+                                                }
                                             )
 
-                            vital_obj["type"] = "blood_pressure"
-                            vital_obj["units"] = "mmHg"
-                            vital_obj["created_date"] = vital.get("resource").get(
-                                "effectiveDateTime"
-                            )
-                            vital_obj["patient"] = self.patient_obj
-                            recorded_at = parse_datetime(vital_obj["created_date"])
-                            exists = PatientVitalModel.objects.filter(
-                                patient=self.patient_obj,
-                                type=vital_obj["type"],
-                                value=vital_obj["value"],
-                                recorded_at=recorded_at,
-                            ).exists()
-                            if not exists:
-                                super().add_vitals(**vital_obj)
+                                # Convert grouped vitals to expected format
+                                for (
+                                    datetime_key,
+                                    vital_data,
+                                ) in vitals_by_datetime.items():
+                                    # Remove duplicate identifiers
+                                    unique_identifiers = []
+                                    seen_ids = set()
+                                    for ident in vital_data["identifiers"]:
+                                        ident_key = (
+                                            f"{ident.get('ID')}_{ident.get('IDType')}"
+                                        )
+                                        if ident_key not in seen_ids:
+                                            unique_identifiers.append(ident)
+                                            seen_ids.add(ident_key)
 
-                    if "Weight" in vital_name:
-                        vital_obj["type"] = "weight"
-                        vital_obj["created_date"] = vital.get("resource").get(
-                            "effectiveDateTime"
-                        )
-                        vital_obj["patient"] = self.patient_obj
-                        if vital_quantity.get("unit") == "kg":
-                            vital_obj["value"] = (
-                                (
-                                    vital.get("resource")
-                                    .get("valueQuantity")
-                                    .get("value")
-                                    * 0.453592
-                                )
-                                if vital_quantity and vital_quantity.get("value")
-                                else 0.0
-                            )
+                                    vitals_json["VitalSigns"].append(
+                                        {
+                                            "Identifiers": (
+                                                unique_identifiers
+                                                if unique_identifiers
+                                                else [{"ID": None, "IDType": "VitalID"}]
+                                            ),
+                                            "DateTime": vital_data["datetime"],
+                                            "Observations": vital_data["observations"],
+                                        }
+                                    )
 
-                        elif vital_quantity.get("unit") == "lbs":
-                            vital_obj["value"] = (
-                                (
-                                    vital.get("resource")
-                                    .get("valueQuantity")
-                                    .get("value")
-                                )
-                                if vital_quantity and vital_quantity.get("value")
-                                else 0.0
-                            )
+                                self.destination_response.update(vitals_json)
+                        else:
+                            # Legacy format - try to access vitals key
+                            if (
+                                isinstance(vitals_response, dict)
+                                and "vitals" in vitals_response
+                            ):
+                                for vital in vitals_response["vitals"]:
+                                    for reading in vital.get("readings", []):
+                                        for observation in reading:
+                                            vitals_json["VitalSigns"].append(
+                                                {
+                                                    "Identifiers": [
+                                                        {
+                                                            "ID": observation.get(
+                                                                "vitalid"
+                                                            ),
+                                                            "IDType": "VitalID",
+                                                        },
+                                                        {
+                                                            "ID": observation.get(
+                                                                "clinicalelementid"
+                                                            ),
+                                                            "IDType": "Clinical Element ID",
+                                                        },
+                                                    ],
+                                                    "DateTime": observation.get(
+                                                        "createddate"
+                                                    ),
+                                                    "Observations": [
+                                                        {
+                                                            "DateTime": observation.get(
+                                                                "readingtaken"
+                                                            ),
+                                                            "Value": observation.get(
+                                                                "value"
+                                                            ),
+                                                            "Units": observation.get(
+                                                                "unit"
+                                                            ),
+                                                            "TargetSite": {
+                                                                "Code": observation.get(
+                                                                    "code"
+                                                                ),
+                                                                "CodeSystem": None,
+                                                                "CodeSystemName": observation.get(
+                                                                    "codeset"
+                                                                ),
+                                                                "Name": observation.get(
+                                                                    "codedescription"
+                                                                ),
+                                                            },
+                                                        }
+                                                    ],
+                                                }
+                                            )
+                                    self.destination_response.update(vitals_json)
+                            else:
+                                # Empty response - return empty VitalSigns array
+                                self.destination_response.update(vitals_json)
+                    else:
+                        self.destination_response.update(vitals_response)
+                        self.destination_response.update({"statuscode": status_code})
+            # Lab Results Data
+                if event == "labresults" or event == "results" or event == "all":
+                    results_json = {"Results": []}
 
-                        vital_obj["diastolic"] = None
-                        vital_obj["units"] = "lbs"
-                        recorded_at = parse_datetime(vital_obj["created_date"])
-                        exists = PatientVitalModel.objects.filter(
-                            patient=self.patient_obj,
-                            type=vital_obj["type"],
-                            value=vital_obj["value"],
-                            recorded_at=recorded_at,
-                        ).exists()
-                        if not exists:
-                            super().add_vitals(**vital_obj)
-
-                    if "Heart Rate" in vital_name:
-                        vital_obj["type"] = "heart_rate"
-                        vital_obj["created_date"] = vital.get("resource").get(
-                            "effectiveDateTime"
-                        )
-                        vital_obj["patient"] = self.patient_obj
-
-                        vital_obj["value"] = (
-                            (vital.get("resource").get("valueQuantity").get("value"))
-                            if vital_quantity and vital_quantity.get("value")
-                            else 0.0
-                        )
-
-                        vital_obj["diastolic"] = None
-                        vital_obj["units"] = (
-                            (vital.get("resource").get("valueQuantity").get("unit"))
-                            if vital_quantity and vital_quantity.get("unit")
-                            else ""
-                        )
-                        recorded_at = parse_datetime(vital_obj["created_date"])
-                        exists = PatientVitalModel.objects.filter(
-                            patient=self.patient_obj,
-                            type=vital_obj["type"],
-                            value=vital_obj["value"],
-                            recorded_at=recorded_at,
-                        ).exists()
-                        if not exists:
-                            super().add_vitals(**vital_obj)
-
-                    if vital_name == "Oximetry":
-                        vital_obj["type"] = "o2_saturation"
-                        vital_obj["created_date"] = vital.get("resource").get(
-                            "effectiveDateTime"
-                        )
-                        vital_obj["patient"] = self.patient_obj
-
-                        vital_obj["value"] = (
-                            (vital.get("resource").get("valueQuantity").get("value"))
-                            if vital_quantity and vital_quantity.get("value")
-                            else 0.0
-                        )
-
-                        vital_obj["diastolic"] = None
-                        vital_obj["units"] = (
-                            vital.get("resource").get("valueQuantity").get("unit")
-                        )
-                        recorded_at = parse_datetime(vital_obj["created_date"])
-                        exists = PatientVitalModel.objects.filter(
-                            patient=self.patient_obj,
-                            type=vital_obj["type"],
-                            value=vital_obj["value"],
-                            recorded_at=recorded_at,
-                        ).exists()
-                        if not exists:
-                            super().add_vitals(**vital_obj)
-
-                    if vital_name == "Respiratory Rate":
-                        vital_obj["type"] = "respiration_rate"
-                        vital_obj["created_date"] = vital.get("resource").get(
-                            "effectiveDateTime"
-                        )
-                        vital_obj["patient"] = self.patient_obj
-
-                        vital_obj["value"] = (
-                            (vital.get("resource").get("valueQuantity").get("value"))
-                            if vital_quantity and vital_quantity.get("value")
-                            else 0.0
-                        )
-
-                        vital_obj["diastolic"] = None
-                        vital_obj["units"] = "BPM"
-                        recorded_at = parse_datetime(vital_obj["created_date"])
-                        exists = PatientVitalModel.objects.filter(
-                            patient=self.patient_obj,
-                            type=vital_obj["type"],
-                            value=vital_obj["value"],
-                            recorded_at=recorded_at,
-                        ).exists()
-                        if not exists:
-                            super().add_vitals(**vital_obj)
-
-        else:
-            self.destination_response.update(
-                {"erromsg": vitals_response, "status_code": status_code}
-            )
-        return self.destination_response
-
-    def create_lab_result_entries(self):
-        patients_chart = Chart(self.customer_id, self.tenant_name, self.source_json)
-        patients_chart.authenticate()
-        self.destination_json["patient"] = self.patient_obj.ehr_id
-        lab_result_response, status_code = patients_chart.get_patient_lab_result(
-            patients_chart.practice_id, **self.destination_json
-        )
-        if status_code == 200:
-            if lab_result_response.get("total") > 0:
-                for labresult in lab_result_response.get("entry"):
-                    lab_result_payload = {}
-                    lab_result_payload["value"] = (
-                        labresult.get("resource", {})
-                        .get("valueQuantity", {})
-                        .get("value")
+                    diagnostic_report = DiagnosticReport(
+                        self.connection
                     )
-                    lab_result_payload["patient"] = self.patient_obj
-                    lab_result_payload["lab_result_for"] = (
-                        labresult.get("resource").get("code").get("text")
-                        if labresult.get("resource").get("code")
-                        else None
+                    diagnostic_report.authenticate()
+                    # Search for lab results by patient and category
+                    lab_results_response, status_code = (
+                        diagnostic_report.search_by_patient(
+                            self.patient_id, category="LAB"
+                        )
                     )
-                    if labresult.get("resource").get("issued"):
-                        lab_result_payload["issued"] = labresult.get("resource").get(
-                            "issued"
+                    if self.source_json["Meta"].get("Test"):
+                        self.destination_response["Meta"]["Raw"].append(
+                            lab_results_response
                         )
-                    if lab_result_payload["value"]:
-                        try:
-                            with transaction.atomic():
-                                exists = PatientLabResult.objects.filter(
-                                    patient=self.patient_obj,
-                                    lab_result_for=lab_result_payload["lab_result_for"],
-                                ).exists()
-                                if not exists:
-                                    super().add_lab_result(**lab_result_payload)
-                        except Exception as e:
-                            return Response(
-                                {"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST
-                            )
 
-        else:
-            self.destination_response.update(
-                {"erromsg": lab_result_response, "status_code": status_code}
-            )
+                    if status_code == 200:
+                        # Check if response is a FHIR Bundle
+                        if (
+                            isinstance(lab_results_response, dict)
+                            and lab_results_response.get("resourceType") == "Bundle"
+                        ):
+                            entries = lab_results_response.get("entry", [])
+
+                            # Handle empty Bundle
+                            if lab_results_response.get("total", 0) == 0 or not entries:
+                                # Return empty Results array
+                                self.destination_response.update(results_json)
+                            else:
+                                # Process each DiagnosticReport resource from Bundle
+                                for entry_item in entries:
+                                    diagnostic_report_resource = entry_item.get(
+                                        "resource", {}
+                                    )
+                                    if (
+                                        not diagnostic_report_resource
+                                        or diagnostic_report_resource.get(
+                                            "resourceType"
+                                        )
+                                        != "DiagnosticReport"
+                                    ):
+                                        continue
+
+                                    # Extract DiagnosticReport ID
+                                    report_id = diagnostic_report_resource.get("id", "")
+
+                                    # Extract status
+                                    report_status = diagnostic_report_resource.get(
+                                        "status", ""
+                                    )
+
+                                    # Extract code (test/panel name)
+                                    code = diagnostic_report_resource.get("code", {})
+                                    code_codings = code.get("coding", [])
+                                    code_value = None
+                                    code_system = None
+                                    code_name = code.get("text") or None
+
+                                    if code_codings:
+                                        first_coding = code_codings[0]
+                                        code_value = first_coding.get("code")
+                                        code_system = first_coding.get("system")
+                                        if not code_name:
+                                            code_name = first_coding.get("display")
+
+                                    # Extract effective date/time
+                                    effective_datetime = diagnostic_report_resource.get(
+                                        "effectiveDateTime"
+                                    )
+
+                                    # Extract encounter reference
+                                    encounter_ref = diagnostic_report_resource.get(
+                                        "encounter", {}
+                                    )
+                                    encounter_id = None
+                                    if isinstance(
+                                        encounter_ref, dict
+                                    ) and encounter_ref.get("reference"):
+                                        encounter_ref_str = encounter_ref.get(
+                                            "reference", ""
+                                        )
+                                        encounter_id = (
+                                            encounter_ref_str.split("/")[-1]
+                                            if "/" in encounter_ref_str
+                                            else encounter_ref_str
+                                        )
+
+                                    # Extract performer (lab/producer)
+                                    performers = diagnostic_report_resource.get(
+                                        "performer", []
+                                    )
+                                    producer = None
+                                    if performers:
+                                        first_performer = performers[0]
+                                        if isinstance(
+                                            first_performer, dict
+                                        ) and first_performer.get("reference"):
+                                            performer_ref = first_performer.get(
+                                                "reference", ""
+                                            )
+                                            producer_id = (
+                                                performer_ref.split("/")[-1]
+                                                if "/" in performer_ref
+                                                else performer_ref
+                                            )
+                                            producer_display = first_performer.get(
+                                                "display"
+                                            )
+                                            producer = {
+                                                "ID": producer_id,
+                                                "IDType": "OrganizationID",
+                                                "Name": producer_display,
+                                            }
+
+                                    # Extract specimen
+                                    specimens = diagnostic_report_resource.get(
+                                        "specimen", []
+                                    )
+                                    specimen = None
+                                    if specimens:
+                                        first_specimen = specimens[0]
+                                        if isinstance(
+                                            first_specimen, dict
+                                        ) and first_specimen.get("reference"):
+                                            specimen_ref = first_specimen.get(
+                                                "reference", ""
+                                            )
+                                            specimen_id = (
+                                                specimen_ref.split("/")[-1]
+                                                if "/" in specimen_ref
+                                                else specimen_ref
+                                            )
+                                            specimen = {
+                                                "ID": specimen_id,
+                                                "Source": None,  # Could be extracted from Specimen resource if needed
+                                            }
+
+                                    # Extract results (Observation references)
+                                    result_observations = []
+                                    results = diagnostic_report_resource.get(
+                                        "result", []
+                                    )
+                                    for result_ref in results:
+                                        if isinstance(
+                                            result_ref, dict
+                                        ) and result_ref.get("reference"):
+                                            observation_ref = result_ref.get(
+                                                "reference", ""
+                                            )
+                                            observation_id = (
+                                                observation_ref.split("/")[-1]
+                                                if "/" in observation_ref
+                                                else observation_ref
+                                            )
+
+                                            # Try to find the Observation resource in the Bundle
+                                            observation_resource = None
+                                            for obs_entry in entries:
+                                                obs_res = obs_entry.get("resource", {})
+                                                if (
+                                                    obs_res.get("resourceType")
+                                                    == "Observation"
+                                                    and obs_res.get("id")
+                                                    == observation_id
+                                                ):
+                                                    observation_resource = obs_res
+                                                    break
+
+                                            if observation_resource:
+                                                # Extract observation code
+                                                obs_code = observation_resource.get(
+                                                    "code", {}
+                                                )
+                                                obs_code_codings = obs_code.get(
+                                                    "coding", []
+                                                )
+                                                obs_code_value = None
+                                                obs_code_system = None
+                                                obs_code_name = (
+                                                    obs_code.get("text") or None
+                                                )
+
+                                                if obs_code_codings:
+                                                    first_obs_coding = obs_code_codings[
+                                                        0
+                                                    ]
+                                                    obs_code_value = (
+                                                        first_obs_coding.get("code")
+                                                    )
+                                                    obs_code_system = (
+                                                        first_obs_coding.get("system")
+                                                    )
+                                                    if not obs_code_name:
+                                                        obs_code_name = (
+                                                            first_obs_coding.get(
+                                                                "display"
+                                                            )
+                                                        )
+
+                                                # Extract observation value
+                                                obs_value = None
+                                                obs_value_type = None
+                                                obs_units = None
+
+                                                if observation_resource.get(
+                                                    "valueQuantity"
+                                                ):
+                                                    value_quantity = (
+                                                        observation_resource.get(
+                                                            "valueQuantity"
+                                                        )
+                                                    )
+                                                    obs_value = str(
+                                                        value_quantity.get("value", "")
+                                                    )
+                                                    obs_units = value_quantity.get(
+                                                        "unit"
+                                                    )
+                                                    obs_value_type = "Quantity"
+                                                elif observation_resource.get(
+                                                    "valueString"
+                                                ):
+                                                    obs_value = (
+                                                        observation_resource.get(
+                                                            "valueString"
+                                                        )
+                                                    )
+                                                    obs_value_type = "String"
+                                                elif observation_resource.get(
+                                                    "valueCodeableConcept"
+                                                ):
+                                                    value_codeable = (
+                                                        observation_resource.get(
+                                                            "valueCodeableConcept"
+                                                        )
+                                                    )
+                                                    value_codings = value_codeable.get(
+                                                        "coding", []
+                                                    )
+                                                    if value_codings:
+                                                        obs_value = value_codings[
+                                                            0
+                                                        ].get(
+                                                            "display"
+                                                        ) or value_codings[
+                                                            0
+                                                        ].get(
+                                                            "code"
+                                                        )
+                                                    else:
+                                                        obs_value = value_codeable.get(
+                                                            "text"
+                                                        )
+                                                    obs_value_type = "CodeableConcept"
+                                                elif observation_resource.get(
+                                                    "valueBoolean"
+                                                ):
+                                                    obs_value = str(
+                                                        observation_resource.get(
+                                                            "valueBoolean"
+                                                        )
+                                                    )
+                                                    obs_value_type = "Boolean"
+
+                                                # Extract interpretation
+                                                interpretation = None
+                                                interpretations = (
+                                                    observation_resource.get(
+                                                        "interpretation", []
+                                                    )
+                                                )
+                                                if interpretations:
+                                                    first_interp = interpretations[0]
+                                                    if isinstance(first_interp, dict):
+                                                        interp_codings = (
+                                                            first_interp.get(
+                                                                "coding", []
+                                                            )
+                                                        )
+                                                        if interp_codings:
+                                                            interpretation = (
+                                                                interp_codings[0].get(
+                                                                    "display"
+                                                                )
+                                                                or interp_codings[
+                                                                    0
+                                                                ].get("code")
+                                                            )
+                                                        else:
+                                                            interpretation = (
+                                                                first_interp.get("text")
+                                                            )
+                                                    elif isinstance(first_interp, str):
+                                                        interpretation = first_interp
+
+                                                # Extract reference range
+                                                reference_range = None
+                                                ref_ranges = observation_resource.get(
+                                                    "referenceRange", []
+                                                )
+                                                if ref_ranges:
+                                                    first_range = ref_ranges[0]
+                                                    low = None
+                                                    high = None
+                                                    text = None
+
+                                                    if isinstance(first_range, dict):
+                                                        low_quantity = first_range.get(
+                                                            "low", {}
+                                                        )
+                                                        if low_quantity:
+                                                            low = str(
+                                                                low_quantity.get(
+                                                                    "value", ""
+                                                                )
+                                                            )
+
+                                                        high_quantity = first_range.get(
+                                                            "high", {}
+                                                        )
+                                                        if high_quantity:
+                                                            high = str(
+                                                                high_quantity.get(
+                                                                    "value", ""
+                                                                )
+                                                            )
+
+                                                        text = first_range.get("text")
+
+                                                    if low or high or text:
+                                                        reference_range = {
+                                                            "Low": low,
+                                                            "High": high,
+                                                            "Text": text,
+                                                        }
+
+                                                # Extract comments
+                                                comments = []
+                                                obs_notes = observation_resource.get(
+                                                    "note", []
+                                                )
+                                                for note in obs_notes:
+                                                    if isinstance(note, dict):
+                                                        note_text = note.get("text")
+                                                        if note_text:
+                                                            comments.append(
+                                                                {"Text": note_text}
+                                                            )
+
+                                                # Extract observation status
+                                                obs_status = observation_resource.get(
+                                                    "status", ""
+                                                )
+
+                                                # Extract effective date/time
+                                                obs_datetime = observation_resource.get(
+                                                    "effectiveDateTime"
+                                                )
+
+                                                result_observations.append(
+                                                    {
+                                                        "Code": obs_code_value,
+                                                        "CodeSystem": obs_code_system,
+                                                        "CodeSystemName": None,
+                                                        "Name": obs_code_name,
+                                                        "DateTime": obs_datetime,
+                                                        "Status": obs_status,
+                                                        "Value": obs_value,
+                                                        "ValueType": obs_value_type,
+                                                        "Units": obs_units,
+                                                        "Interpretation": interpretation,
+                                                        "ReferenceRange": reference_range,
+                                                        "Comments": (
+                                                            comments
+                                                            if comments
+                                                            else None
+                                                        ),
+                                                    }
+                                                )
+
+                                    # Build Result entry
+                                    result_entry = {
+                                        "Code": code_value,
+                                        "CodeSystem": code_system,
+                                        "CodeSystemName": None,
+                                        "Name": code_name,
+                                        "Status": report_status,
+                                        "Observations": (
+                                            result_observations
+                                            if result_observations
+                                            else []
+                                        ),
+                                    }
+
+                                    # Add encounter if available
+                                    if encounter_id:
+                                        result_entry["Encounter"] = {
+                                            "Identifiers": [
+                                                {
+                                                    "ID": encounter_id,
+                                                    "IDType": "EncounterID",
+                                                }
+                                            ],
+                                        }
+
+                                    # Add producer if available
+                                    if producer:
+                                        result_entry["Producer"] = producer
+
+                                    # Add specimen if available
+                                    if specimen:
+                                        result_entry["Specimen"] = specimen
+
+                                    results_json["Results"].append(result_entry)
+
+                                self.destination_response.update(results_json)
+                        else:
+                            # Non-Bundle response or error
+                            if (
+                                isinstance(lab_results_response, dict)
+                                and "error" in lab_results_response
+                            ):
+                                self.destination_response.update(lab_results_response)
+                            self.destination_response.update(
+                                {"statuscode": status_code}
+                            )
+                    else:
+                        # Error response
+                        self.destination_response.update(lab_results_response)
+                        self.destination_response.update({"statuscode": status_code})
+
+        except Exception as e:
+            print("error", e)
+            return None
+        print("destination_response", self.destination_response)
         return self.destination_response
 
-    def convert_plain_text_base64_to_pdf(self, encoded_str: str) -> str:
-        # Remove the data URI scheme (if any)
-        _, base64_data = encoded_str.split(
-            ",", 1
-        )  # split the encoded base64 data from data uri
-        decoded_text = base64.b64decode(base64_data).decode("utf-8")
-        buffer = BytesIO()
-        c = canvas.Canvas(buffer)
-        text_obj = c.beginText(40, 800)  # make a on fly pdf document
+class MedicationNewTransformer(Transformer):
 
-        for line in decoded_text.splitlines():
-            text_obj.textLine(line)  # adding each line of decoded text into pdf file
-
-        c.drawText(text_obj)
-        c.save()
-
-        buffer.seek(0)
-        pdf_base64 = base64.b64encode(buffer.read()).decode(
-            "utf-8"
-        )  # making a data uri for .pdf file.
-        return f"data:application/pdf;base64,{pdf_base64}"
-
-    def patient_document(self):
-        patient_document = DiagnosticReport(
-            self.customer_id, self.tenant_name, self.source_json
-        )
-        patient_document.authenticate()
-
-        self.destination_json["patient"] = self.patient_obj.ehr_id
-        self.destination_json["category"] = "LAB"
-        document_response, status_code = patient_document.get_diagnostic_report(
-            patient_document.practice_id, **self.destination_json
-        )
-        if status_code == 200:
-            if document_response.get("total") > 0:
-                for document in document_response.get("entry"):
-                    resource = document.get("resource", {})
-                    document_payload = {}
-                    document_payload["patient"] = self.patient_obj
-
-                    if resource.get("code"):
-                        document_payload["name"] = resource["code"].get("text")
-                    if resource.get("issued"):
-                        document_payload["created_date"] = resource["issued"]
-                    if "presentedForm" in resource:
-                        base64_data = resource.get("presentedForm")
-                        for encoded_data in base64_data:
-                            content_type = encoded_data.get(
-                                "contentType"
-                            )  # e.g., text/plain
-                            base64_str = encoded_data.get("data")
-                            encoded_str = f"data:{content_type};base64,{base64_str}"
-
-                            # Convert only if it's a plain text file
-                            if content_type == "text/plain":
-                                encoded_str = self.convert_plain_text_base64_to_pdf(
-                                    encoded_str
-                                )
-                                content_type = "application/pdf"  # update content type
-
-                            serialized_file = LabResultFileSerializer(
-                                data={"file": encoded_str}
-                            )
-                            serialized_file.is_valid(raise_exception=True)
-                            document_payload[
-                                "file"
-                            ] = serialized_file.validated_data.get("file")
-
-                        # Save document using method - assuming this uses a serializer or model save
-                        self.add_documents(**document_payload)
-                        self.destination_response.update(
-                            {"document_response": document_response, "status_code": 200}
-                        )
-        else:
-            self.destination_response.update(
-                {"patient_documents": document_response, "status_code": status_code}
-            )
-        return self.destination_response
-
-
-class PatientCCDA(Transformer):
-    def __init__(self, source_data, customer_id, tenant_name):
-        super().__init__(source_data, customer_id, tenant_name)
+    def __init__(self, connection_obj,source_data):
+        super().__init__(connection_obj, source_data)
+        self.connection = connection_obj
+        self.source_json = source_data
         self.destination_response = {}
 
     def transform(self):
-        patientid = self.source_json.get("patientid")
+        medications_json = {"Medications": []}
+        return Response({"detail":"Not have apporpriate access to create medication"},status=status.HTTP_403_FORBIDDEN)
 
-        patient_ccda = DocumentReference(
-            self.customer_id, self.tenant_name, self.source_json
-        )
-        patient_ccda.authenticate()
-
-        self.destination_json["category"] = "clinical-note"
-        self.destination_json["patientid"] = patientid
-        patient_ccda_record, status_code = patient_ccda.search_patient_documents(
-            patient_ccda.practice_id, **self.destination_json
-        )
-        if status_code == 200 and patient_ccda_record.get("entry"):
-            for single_clinical_docs in patient_ccda_record.get("entry"):
-                if single_clinical_docs.get("resource").get("resourceType") == "Binary":
-                    CCDA_record_id = single_clinical_docs.get("resource").get("id")
-            binaryid = CCDA_record_id
-            patient_ccda_actual_record, status_code = patient_ccda.get_patient_ccda(
-                patient_ccda.practiceid, binaryid, **self.destination_json
-            )
-            if status_code == 200:
-                patient_obj = PatientModel.objects.get(ehr_id=patientid)
-                file_name = f"CCDA_{patientid}.xml"
-                ccda_data_io = io.BytesIO(patient_ccda_actual_record)
-                ccda_doc = CCDADocument(patient=patient_obj)
-                ccda_doc.file.save(file_name, ccda_data_io, save=True)
-
-                self.destination_response.update({"success": True})
-
-        else:
-            self.destination_response.update(
-                {"errormesssage": patient_ccda_record, "statuscode": status_code}
-            )
-        return self.destination_response
-
-
-class DocumentNewTransformer(Transformer):
-    def __init__(self, source_data, customer_id, tenant_name=None):
-        super().__init__(source_data, customer_id, tenant_name)
+class ClinicalsPushTransformer(Transformer):
+    def __init__(self, connection_obj,source_data):
+        super().__init__(connection_obj, source_data)
+        self.connection = connection_obj
+        self.source_json = source_data
+        self.destination_response = {}
 
     def transform(self):
-        document_object = {}
-        self.destination_json = {"entry": []}
-        patientid = self.source_json.get("patientid")
-        filecontents = self.source_json.get("filecontents")
-        providerid = self.source_json.get("providerid")
-        creation_date = self.source_json.get("created_date")
-        documenttype = self.source_json.get("documenttype")
-        document_object["resourceType"] = "DocumentReference"
-        document_object["status"] = "final"
-        document_object["subject"] = {"reference": f"Patient/{patientid}"}
-        document_object["author"] = [{"reference": f"Practitioner/{providerid}"}]
-        document_object["content"] = [
-            {
-                "attachment": {
-                    "contentType": f"application/{documenttype}",
-                    "data": filecontents,
-                    "creation": creation_date,
-                }
-            }
-        ]
-
-        document_object["authenticator"] = {"reference": f"Practitioner/{providerid}"}
-        self.destination_json["resourceType"] = "Bundle"
-        self.destination_json["type"] = "transaction"
-        self.destination_json["entry"].append(document_object)
-        document_reference = DocumentReference(
-            self.customer_id, self.tenant_name, self.source_json
-        )
-        document_reference.authenticate()
-        document_push_response, status_code = document_reference.new_clinical_note(
-            **self.destination_json
-        )
-        if status_code == 200:
-            self.destination_response["documentid"] = document_push_response.get("id")
-        else:
-            self.destination_response.update(
-                {
-                    "errormessage": document_push_response,
-                    "status_code": status_code,
-                },
-            )
-        return self.destination_response
-
-
-class PatientQuerySyncTransformer(PatientQueryTransformer):
-    def __init__(self, source_data, customer_id, ehr_name, tenant_name):
-        super().__init__(source_data, customer_id, ehr_name, tenant_name)
-        self.temp_response = {}
-        self.ehr_name = ehr_name
-        self.patient_provider_group = None
-        self.patient_obj = None
-
-    def transform(self, events):
-        patient = Chart(self.customer_id, self.tenant_name, self.source_json)
-        patient.authenticate()
-        provider_group = self.source_json.get("pg_id")
-
-        try:
-            self.patient_provider_group = ProviderGroup.objects.get(id=provider_group)
-        except ProviderGroup.DoesNotExist:
-            return Response({"detail": "Provider Group not found"}, status=400)
-        patient_id = self.source_json.get("patientid")
-
-        try:
-            self.patient_obj = PatientModel.objects.get(
-                id=patient_id, provider_group=self.patient_provider_group
-            )
-        except PatientModel.DoesNotExist:
-            return Response({"detail": "Patient does not found"}, status=400)
-
-        for event in events:
-            if event == "allergies" or event == "all":
-                created_repsonse = self.create_allergies_entries()
-                self.destination_response.update(created_repsonse)
-            if event == "medications" or event == "all":
-                created_repsonse = self.medication_from_ccda()  # function changed
-                self.destination_response.update(created_repsonse)
-            if event == "labresult" or event == "all":
-                created_repsonse = self.create_lab_result_entries()
-                self.destination_response.update(created_repsonse)
-            if event == "conditions" or event == "all":
-                created_repsonse = self.create_conditions_entries()
-                self.destination_response.update(created_repsonse)
-            if event == "vitals" or event == "all":
-                created_repsonse = self.create_vitals_entries()
-                self.destination_response.update(created_repsonse)
-
-        return self.destination_response
+        return Response({"detail":"Not have apporpriate access to push clinical summary"},status=status.HTTP_403_FORBIDDEN)

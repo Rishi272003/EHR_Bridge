@@ -3,7 +3,8 @@ import uuid, random, string
 from .constants import EHR_CHOICES,APP_TYPES,ENVIRONMENT_CHOICE,CONNECTION_STATUS
 import json
 from django.conf import settings
-
+from django.core.validators import URLValidator
+from .utils import generate_code_verifier, generate_code_challenge
 # Create your models here.
 
 class BaseModel(models.Model):
@@ -57,11 +58,32 @@ class EHRConnection(BaseModel):
     export_url = models.CharField(max_length=100, blank=True, null=True)
     jobId = models.CharField(max_length=6, blank=True, null=True)
     department_id = models.CharField(max_length=5,blank=True,null=True)
-
+    customer_auth_url = models.TextField(blank=True,null=True,validators=[URLValidator()])
+    code_verifier = models.CharField(
+        max_length=255, blank=True, null=True, editable=False
+    )
+    code_challenge = models.CharField(
+        max_length=255, blank=True, null=True, editable=False
+    )
+    org_redirect_uri = models.URLField(max_length=255, blank=True, null=True)
     def __str__(self) -> str:
         return self.title
 
     def save(self, *args, **kwargs):
+        # Generate code_verifier and code_challenge on creation
+        # If they're missing on updates (shouldn't happen, but safety check), regenerate them
+        if self._state.adding:
+            if not self.code_verifier:
+                self.code_verifier = generate_code_verifier()
+            if not self.code_challenge and self.code_verifier:
+                self.code_challenge = generate_code_challenge(self.code_verifier)
+        else:
+            # On updates, preserve existing values but regenerate if somehow missing
+            if not self.code_verifier:
+                self.code_verifier = generate_code_verifier()
+            if not self.code_challenge and self.code_verifier:
+                self.code_challenge = generate_code_challenge(self.code_verifier)
+
         data = json.loads(settings.EHR_URLS)
         selected_ehr_object = data[self.ehr_name.upper()]
         self.redirect_uri = selected_ehr_object.get("redirect_uri")
@@ -86,15 +108,49 @@ class EHRConnection(BaseModel):
                 self.base_url = selected_ehr_object["base_url_prod"]
                 self.token_url = selected_ehr_object["auth_url_prod"]
                 self.authorize_url = selected_ehr_object["auth_code_prod"]
-        elif self.ehr_environment=="eclinicalworks":
+        elif self.ehr_name=="eclinicalworks":
             if self.ehr_environment == "sandbox":
-                self.base_url = selected_ehr_object["base_url_test"]
+                self.base_url = selected_ehr_object["base_url_test"].format(practiceid=self.practice_id)
                 self.token_url = selected_ehr_object["auth_url_test"]
                 self.authorize_url = selected_ehr_object["auth_code_test"]
+                self.audiance = self.base_url
+                self.state = (
+                    f"{self.uuid},{self.ehr_name.lower()},{self.app_type.lower()}"
+                )
+                self.redirect_uri = selected_ehr_object.get("redirect_uri")
+                self.customer_auth_url = (
+                    "{}?response_type=code&client_id={}&redirect_uri={}"
+                    "&scope={}&code_challenge={}&code_challenge_method=S256&aud={}&state={}".format(
+                        self.authorize_url,
+                        self.client_id,
+                        self.redirect_uri,
+                        self.scope,
+                        self.code_challenge,
+                        self.audiance,
+                        self.state,
+                    )
+                )
             else:
-                self.base_url = selected_ehr_object["base_url_prod"]
+                self.base_url = selected_ehr_object["base_url_prod"].format(practiceid=self.practice_id)
                 self.token_url = selected_ehr_object["auth_url_prod"]
                 self.authorize_url = selected_ehr_object["auth_code_prod"]
+                self.audiance = self.base_url
+                self.state = (
+                    f"{self.uuid},{self.ehr_name.lower()},{self.app_type.lower()}"
+                )
+                self.redirect_uri = selected_ehr_object.get("redirect_uri")
+                self.customer_auth_url = (
+                    "{}?response_type=code&client_id={}&redirect_uri={}"
+                    "&scope={}&code_challenge={}&code_challenge_method=S256&aud={}&state={}".format(
+                        self.authorize_url,
+                        self.client_id,
+                        self.redirect_uri,
+                        self.scope,
+                        self.code_challenge,
+                        self.audiance,
+                        self.state,
+                    )
+                )
         elif self.ehr_name=="epic":
             if self.ehr_environment == "sandbox":
                 self.base_url = selected_ehr_object["base_url_test"]

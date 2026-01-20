@@ -1,14 +1,13 @@
-from ecaremd.ehr_integrations.ehr_services.eclinicalworks.client import ECWFHIRClient
-from ecaremd.ehr_integrations.ehr_services.eclinicalworks.urls import ECW_URLS
+from services.ehr.eclinicalworks.client import ECWClient
+from services.ehr.eclinicalworks.urls import ECW_URLS
 
-
-class Patient(ECWFHIRClient):
-    def __init__(self, customer_id, tenant_name=None, source_json=None) -> None:
-        super().__init__(customer_id, tenant_name, source_json)
-
-    def get_search_criteria(self, practiceid, **kwargs):
+class Patient(ECWClient):
+    def __init__(self, connection_obj) -> None:
+        super().__init__(connection_obj)
+    def get_search_criteria(self, **kwargs):
+        print("kwargs",kwargs)
         url = self.build_url(
-            ECW_URLS["Patient"]["search_criteria"]["path"], practiceid=practiceid
+            ECW_URLS["Patient"]["search_criteria"]["path"]
         )
         return self.get(
             url,
@@ -36,3 +35,9 @@ class Patient(ECWFHIRClient):
         )
         payload = self.build_payload(**kwargs)
         return self.post(url, data=payload)
+
+    def get_specific_patient(self, patientid):
+        url = self.build_url(
+            ECW_URLS["Patient"]["specific_patient"]["path"], patientid=patientid
+        )
+        return self.get(url)

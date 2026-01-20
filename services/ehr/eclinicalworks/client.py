@@ -1,39 +1,29 @@
-import json
+import time
+import uuid
 from datetime import timedelta
 
 import requests
 from django.utils import timezone
 from requests.auth import HTTPBasicAuth
-
-from ecaremd.ehr_integrations.ehr_services.client import ClientBase
-
-
-class ECWFHIRClient(ClientBase):
+from services.ehr.client import SuperClient
+class ECWClient(SuperClient):
     """
     A client to call API's for GET, POST, PUT, PATCH, DELETE methods for given URL & Payload.
     """
 
-    def __init__(self, customer_id, tenant_name=None, source_json=None):
+    def __init__(self, connection_obj):
         super().__init__()
-
-        self.customer, self.ehr = super().get_customer_obj(
-            customer_id, tenant_name, source_json
-        )
+        self.ehr = connection_obj
         self.base_url = self.ehr.base_url
         self.auth_url = self.ehr.token_url
         self.auth_token = None
-        self.auth_token_type = None
-        self.auth_token_expires_in = None
-        self.is_token_expired = False
         self.scope = self.ehr.scope
         self.headers = {}
         self.payload = {}
-        self.app_type = self.ehr.app_type
-        self.client_id = self.ehr.client_id
-        self.client_secret_key = self.ehr.client_secret
-        self.grant_type = self.ehr.grant_type
-        self.redirect_url = self.ehr.redirect_uri
-        self.practice_id = self.ehr.practice_id
+        self.ecw_client_id = self.ehr.client_id
+        self.ecw_client_secret_key = self.ehr.client_secret
+        self.ecw_grant_type = self.ehr.grant_type
+        self.ecw_api_scope = self.ehr.scope
 
     def authenticate(self):
         """
@@ -57,43 +47,29 @@ class ECWFHIRClient(ClientBase):
         Read stored token from database.
         """
         time_difference = timezone.now() - timedelta(minutes=4.8)
-        if self.ehr.app_type == "provider":
-            ehr_provider = (
-                self.customer.ehr_provider
-                if not self.customer.ehr_provider.multi_connection
-                else self.customer.ehr_provider.creds.filter(
-                    provider_group=self.ehr.provider_group, ehr_name=self.ehr.ehr_name
-                ).first()
-            )
+        token = self.ehr.access_token
+        if token:
+            if self.ehr.access_token_generated_at <= time_difference:
+                payload = {
+                    "grant_type": "refresh_token",
+                    "refresh_token": self.ehr.refresh_token,
+                    "scope": self.ehr.scope,
+                }
+                renew_token = requests.request(
+                    "POST",
+                    url=self.auth_url,
+                    headers={
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                    data=payload,
+                    auth=HTTPBasicAuth(self.ecw_client_id, self.ecw_client_secret_key),
+                )
+                if renew_token.status_code == 200:
+                    self.ehr.access_token = renew_token.json().get("access_token")
+                    self.ehr.refresh_token = renew_token.json().get("refresh_token")
 
-            token = ehr_provider.access_token
-            if token:
-                if ehr_provider.access_token_generated_at <= time_difference:
-                    payload = {
-                        "grant_type": "refresh_token",
-                        "refresh_token": ehr_provider.refresh_token,
-                        "scope": self.scope,
-                        "redirect_uri": self.redirect_url,
-                    }
-                    renew_token = requests.request(
-                        "POST",
-                        url=self.auth_url,
-                        headers={
-                            "Content-Type": "application/x-www-form-urlencoded",
-                        },
-                        data=payload,
-                        auth=HTTPBasicAuth(self.client_id, self.client_secret_key),
-                    )
-                    if renew_token.status_code == 200:
-                        ehr_provider.access_token = renew_token.json().get(
-                            "access_token"
-                        )
-                        ehr_provider.refresh_token = renew_token.json().get(
-                            "refresh_token"
-                        )
-
-                        ehr_provider.access_token_generated_at = timezone.now()
-                        ehr_provider.save()
+                    self.ehr.access_token_generated_at = timezone.now()
+                    self.ehr.save()
             return token if token else False
 
     def build_url(self, rawurl: str, **kwargs) -> str:
@@ -104,47 +80,90 @@ class ECWFHIRClient(ClientBase):
         payload = kwargs
         return payload
 
-    def bulk_get(
-        self, url: str = "", content_type: str = "application/json", params: dict = {}
-    ) -> str:
+    def get_ehr_data(self, ehr_element):
         """
-        Get data from eClinicalWorks API.
+        Stub method for logging/storing EHR API interactions.
+        Can be implemented later if needed for logging or audit purposes.
         """
-        self.headers["Content-Type"] = content_type
-        self.headers["Prefer"] = "respond-async"
-        self.headers["Accept"] = "application/fhir+json"
-
-        response = requests.request("GET", url, headers=self.headers, params=params)
-        if response.status_code == 202:
-            response_data = response.headers
-        else:
-            response_data = response.json()
-
-        return response_data, response.status_code
+        # TODO: Implement EHR data logging if needed
+        pass
 
     def get(
         self, url: str = "", content_type: str = "application/json", params: dict = {}
     ) -> str:
         """
-        Get data from eClinicalWorks API.
+        Get data from Athena Health API.
         """
         self.headers["Content-Type"] = content_type
+        print("url", url)
+        print("headers", self.headers)
+        print("params", params)
         response = requests.request("GET", url, headers=self.headers, params=params)
-        if response.status_code == 200:
-            if response.headers.get("Content-Type") == "application/xml":
-                return response.content, response.status_code
-            return response.json(), response.status_code
-        return response, response.status_code
+        print("response", response.json())
+        ehr_element = {
+            "ehr_api": url,
+            "ehr_body": params,
+            "ehr_response": response.json(),
+            "ehr_method": "GET",
+            "ehr_status_code": response.status_code,
+        }
+        self.get_ehr_data(ehr_element)
+        return response.json(), response.status_code
 
     def post(
-        self,
-        url: str = "",
-        content_type: str = "application/fhir+json",
-        data: dict = None,
+        self, url: str = "", content_type: str = "application/json", data: dict = None
     ):
-        self.headers["Content-Type"] = content_type
-        response = requests.request(
-            "POST", url, headers=self.headers, data=json.dumps(data)
-        )
 
+        self.headers["Content-Type"] = content_type
+
+        # Use json parameter for JSON content type, data for form-encoded
+        if content_type == "application/json" and data:
+            response = requests.request("POST", url, headers=self.headers, json=data)
+        else:
+            response = requests.request("POST", url, headers=self.headers, data=data)
+
+        ehr_element = {
+            "ehr_api": url,
+            "ehr_body": data,
+            "ehr_response": response.json() if response.content else {},
+            "ehr_method": "POST",
+            "ehr_status_code": response.status_code,
+        }
+        self.get_ehr_data(ehr_element)
+
+        try:
+            return response.json(), response.status_code
+        except ValueError:
+            return {"detail": response.text}, response.status_code
+
+    def put(
+        self, url: str = "", content_type: str = "application/json", data: dict = None
+    ):
+
+        self.headers["Content-Type"] = content_type
+        response = requests.request("PUT", url, headers=self.headers, data=data)
+        ehr_element = {
+            "ehr_api": url,
+            "ehr_body": data,
+            "ehr_response": response.json(),
+            "ehr_method": "PUT",
+            "ehr_status_code": response.status_code,
+        }
+        self.get_ehr_data(ehr_element)
+        return response.json(), response.status_code
+
+    def delete(
+        self, url: str = "", content_type: str = "application/json", params: list = None
+    ):
+
+        self.headers["Content-Type"] = content_type
+        response = requests.request("DELETE", url, headers=self.headers, params=params)
+        ehr_element = {
+            "ehr_api": url,
+            "ehr_body": params,
+            "ehr_response": response.json(),
+            "ehr_method": "DELETE",
+            "ehr_status_code": response.status_code,
+        }
+        self.get_ehr_data(ehr_element)
         return response.json(), response.status_code

@@ -2,59 +2,59 @@ ECW_URLS = {
     "Chart": {
         "get_patient_demographics": {
             "method": "GET",
-            "path": "/{practiceid}/Patient",
+            "path": "/Patient",
             "description": "Get patient's Demographics",
         },
         "get_patient_allergy": {
             "method": "GET",
-            "path": "/{practiceid}/AllergyIntolerance",
+            "path": "/AllergyIntolerance",
             "description": "Get patient's allergies",
         },
         "get_patient_medication": {
             "method": "GET",
-            "path": "/{practiceid}/MedicationAdministration",
+            "path": "/MedicationAdministration",
             "description": "Get patient's medications",
         },
         "get_patient_problem": {
             "method": "GET",
-            "path": "/{practiceid}/Condition",
+            "path": "/Condition",
             "description": "Get patient's problem-list-item",
         },
         "get_patient_encounter": {
             "method": "GET",
-            "path": "/{practiceid}/Encounter",
+            "path": "/Encounter",
             "description": "Get patient's Encounter",
         },
         "get_patient_vitals": {
             "method": "GET",
-            "path": "/{practiceid}/Observation",
+            "path": "/Observation",
             "description": "Get patient's Vitals",
         },
         "get_patient_lab_result": {
             "method": "GET",
-            "path": "/{practiceid}/Observation",
+            "path": "/Observation",
             "description": "Get patient's Lab Results",
         },
-        "get_patient_insurance":{
-            "method":"GET",
-            "path":"/{practiceid}/Coverage",
-            "description":"Get patient's insurance details"
+        "get_patient_insurance": {
+            "method": "GET",
+            "path": "/Coverage",
+            "description": "Get patient's insurance details",
         },
-        "get_patient_relation":{
-            "method":"GET",
-            "path":"/{practiceid}/RelatedPerson",
-            "description":"Get patient's relations"
-        }
+        "get_patient_relation": {
+            "method": "GET",
+            "path": "/RelatedPerson",
+            "description": "Get patient's relations",
+        },
     },
     "Patient": {
         "specific_patient": {
             "method": "GET",
-            "path": "/{practiceid}/Patient/{patientid}",
+            "path": "/Patient/{patientid}",
             "description": "Get specific patient record",
         },
         "search_criteria": {
             "method": "GET",
-            "path": "/{practiceid}/Patient",
+            "path": "/Patient",
             "description": "Get list of patients - enhanced best matching search criteria",
         },
         "create_new_patient": {
@@ -66,7 +66,7 @@ ECW_URLS = {
     "Organization": {
         "get_organization": {
             "method": "GET",
-            "path": "/{practiceid}/Organization",
+            "path": "/Organization",
             "description": "search for organization for given organization id",
         }
     },
@@ -97,7 +97,7 @@ ECW_URLS = {
     "DiagnosticReport": {
         "get_diagnostic_report": {
             "method": "GET",
-            "path": "/{practiceid}/DiagnosticReport",
+            "path": "/DiagnosticReport",
             "description": "Search for Diagnostic Report for Lab results that meet supplied query parameters",
         }
     },
@@ -118,7 +118,7 @@ ECW_URLS = {
     "DocumentReference": {
         "search_patient_documents": {
             "method": "GET",
-            "path": "/{practiceid}/DocumentReference",
+            "path": "/DocumentReference",
             "description": "Search for Document Reference that meet supplied query parameters",
         },
         "new_clinical_note": {

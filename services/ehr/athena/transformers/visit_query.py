@@ -23,11 +23,10 @@ CODE_SYSTEMS = {
 
 
 class VisitQueryTransformer:
-    def __init__(self, connection_obj, visit_data, connection_data, meta_data):
+    def __init__(self, connection_obj, source_data):
         self.connection_obj = connection_obj
-        self.visit_data = visit_data  # Contains VisitNumber or startdate/enddate/departmentid
-        self.departmentid = visit_data.get("departmentid") if visit_data.get("departmentid") else None
-        self.meta_data = meta_data  # Original meta from request
+        self.source_data = source_data
+        self.meta_data = source_data.get("Meta",{})
         self.destination_response = {}
         self.patient_id = None
         self.appointment_data = None
