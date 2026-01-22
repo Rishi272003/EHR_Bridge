@@ -297,7 +297,5 @@ class NewPatientTransformer(Transformer):
             return self.destination_response
 
         except Exception as e:
-            print(f"Error in NewPatientTransformer: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return Response({"Error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            self.destination_response.update({"detail": str(e)})
+            return self.destination_response

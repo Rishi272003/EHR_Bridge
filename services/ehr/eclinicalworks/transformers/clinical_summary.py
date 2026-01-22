@@ -7,7 +7,9 @@ from services.ehr.transformer import Transformer
 from services.ehr.eclinicalworks.categories.Chart import Chart
 from services.ehr.eclinicalworks.categories.Patient import Patient
 from services.ehr.eclinicalworks.categories.DiagnosticReport import DiagnosticReport
-
+from services.schemas import *
+import uuid
+import json
 class PatientQueryTransformer(Transformer):
     def __init__(self, connection_obj, source_data):
         self.source_json = source_data
@@ -1507,21 +1509,213 @@ class PatientQueryTransformer(Transformer):
 class MedicationNewTransformer(Transformer):
 
     def __init__(self, connection_obj,source_data):
-        super().__init__(connection_obj, source_data)
         self.connection = connection_obj
         self.source_json = source_data
         self.destination_response = {}
 
-    def transform(self):
-        medications_json = {"Medications": []}
-        return Response({"detail":"Not have apporpriate access to create medication"},status=status.HTTP_403_FORBIDDEN)
+
+    def transform_medication(self):
+        """
+        Placeholder for medication transformation.
+        """
+        self.destination_response.update({"detail": "Medication transformation not yet implemented"})
+        return self.destination_response
 
 class ClinicalsPushTransformer(Transformer):
     def __init__(self, connection_obj,source_data):
-        super().__init__(connection_obj, source_data)
         self.connection = connection_obj
         self.source_json = source_data
         self.destination_response = {}
 
-    def transform(self):
-        return Response({"detail":"Not have apporpriate access to push clinical summary"},status=status.HTTP_403_FORBIDDEN)
+    def transform(self,event):
+        match event:
+            case "allergies":
+                return self.transform_allergies()
+            case "conditions":
+                return self.transform_medication()
+            case _:
+                self.destination_response.update({"detail":"Not have apporpriate access to push clinical summary"})
+        return self.destination_response
+
+    def transform_allergies(self):
+        """
+        Transform source JSON from create_allergies API to FHIR AllergyIntolerance Bundle format.
+        """
+        try:
+            # Get patient ID from source data
+            patient_id = None
+            patient_identifiers = self.source_json.get("Patient", {}).get("Identifiers", [])
+            if patient_identifiers:
+                for identifier in patient_identifiers:
+                    if identifier.get("IDType") == "EHRID":
+                        patient_id = identifier.get("ID")
+                        break
+
+            if not patient_id:
+                self.destination_response.update({"error": "Patient ID not found in source data"})
+                return self.destination_response
+
+            # Get allergies from source data
+            allergies = self.source_json.get("Allergies", [])
+
+            if not allergies:
+                self.destination_response.update({"error": "No allergies found in source data"})
+                return self.destination_response
+
+            # Build FHIR Bundle entries
+            entries = []
+
+            for allergy in allergies:
+                # Generate unique ID for the resource
+                resource_id = str(uuid.uuid4())
+
+                # Extract substance/code information
+                substance = allergy.get("Substance", {})
+                allergy_type = allergy.get("Type", {})
+
+                # Build coding list for code
+                codings = []
+                if substance.get("Code"):
+                    coding_system = substance.get("CodeSystem") or "http://www.nlm.nih.gov/research/umls/rxnorm"
+                    codings.append(
+                        Coding(
+                            system=coding_system,
+                            code=str(substance.get("Code")),
+                            display=substance.get("Name")
+                        )
+                    )
+                elif allergy_type.get("Code"):
+                    coding_system = allergy_type.get("CodeSystem") or "http://www.nlm.nih.gov/research/umls/rxnorm"
+                    codings.append(
+                        Coding(
+                            system=coding_system,
+                            code=str(allergy_type.get("Code")),
+                            display=allergy_type.get("Name")
+                        )
+                    )
+
+                # Build CodeableConcept for code
+                code_text = substance.get("Name") or allergy_type.get("Name")
+                code = CodeableConcept(
+                    coding=codings if codings else None,
+                    text=code_text
+                )
+
+                # Build clinical status
+                clinical_status = CodeableConcept(
+                    coding=[
+                        Coding(
+                            system="http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+                            code="active",
+                            display="Active"
+                        )
+                    ]
+                )
+
+                # Build verification status
+                verification_status = CodeableConcept(
+                    coding=[
+                        Coding(
+                            system="http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+                            code="confirmed",
+                            display="Confirmed"
+                        )
+                    ]
+                )
+
+                # Build reactions
+                fhir_reactions = []
+                source_reactions = allergy.get("Reaction", [])
+                for source_reaction in source_reactions:
+                    reaction_name = source_reaction.get("Name") or source_reaction.get("Text")
+                    if reaction_name:
+                        manifestation = Manifestation(text=reaction_name)
+                        fhir_reactions.append(Reaction(manifestation=[manifestation]))
+
+                # Map criticality
+                criticality = None
+                criticality_data = allergy.get("Criticality", {})
+                if criticality_data.get("Name"):
+                    criticality_name = criticality_data.get("Name", "").lower()
+                    print("criticality_name", criticality_name)
+                    if "hight" in criticality_name or "severe" in criticality_name:
+                        criticality = "high"
+                    elif "low" in criticality_name or "mild" in criticality_name:
+                        criticality = "low"
+                    else:
+                        criticality = "unable-to-assess"
+
+                # Map category based on type
+                category = None
+                type_name = allergy_type.get("Name", "").lower() if allergy_type.get("Name") else ""
+                if "medication" in type_name or "drug" in type_name:
+                    category = ["medication"]
+                elif "food" in type_name:
+                    category = ["food"]
+                elif "environment" in type_name:
+                    category = ["environment"]
+                else:
+                    category = ["medication"]  # Default to medication
+
+                # Parse onset datetime
+                onset_datetime = None
+                start_date = allergy.get("StartDate")
+                if start_date:
+                    try:
+                        # Try parsing different date formats
+                        if isinstance(start_date, str):
+                            for fmt in ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%m/%d/%Y"]:
+                                try:
+                                    onset_datetime = datetime.strptime(start_date, fmt)
+                                    break
+                                except ValueError:
+                                    continue
+                    except Exception:
+                        onset_datetime = None
+
+                # Build the Resource
+                resource = Resource(
+                    resourceType="AllergyIntolerance",
+                    id=resource_id,
+                    meta=MetaData(
+                        profile=["http://hl7.org/fhir/us/core/StructureDefinition/us-core-allergyintolerance"]
+                    ),
+                    clinicalStatus=clinical_status,
+                    verificationStatus=verification_status,
+                    category=category,
+                    criticality=criticality,
+                    code=code,
+                    patient=Patient(reference=f"Patient/{patient_id}"),
+                    onsetDateTime=onset_datetime,
+                    reaction=fhir_reactions if fhir_reactions else None
+                )
+
+                # Build the Entry
+                entry = Entry(
+                    resource=resource,
+                    request=Request(
+                        method="POST",
+                        url="AllergyIntolerance"
+                    )
+                )
+
+                entries.append(entry)
+
+            # Build the FHIR Bundle
+            fhir_bundle = FHIRBundle(
+                resourceType="Bundle",
+                id=str(uuid.uuid4()),
+                meta=MetaData(lastUpdated=datetime.now()),
+                type="transaction",
+                entry=entries
+            )
+
+            # Convert to JSON and print
+            fhir_json = json.loads(fhir_bundle.model_dump_json(exclude_none=True))
+            self.destination_response = fhir_json
+            return self.destination_response
+
+        except Exception as e:
+            print(f"Error transforming allergies: {e}")
+            self.destination_response.update({"error": str(e)})
+            return self.destination_response

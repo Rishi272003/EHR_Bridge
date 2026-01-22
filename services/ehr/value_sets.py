@@ -6,7 +6,7 @@ clinical_summary_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
             "Events": [
                 "Demographics",
@@ -29,7 +29,7 @@ clinical_summary_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
             "Destinations": [
                 {
@@ -1839,7 +1839,7 @@ clinical_summary_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {"Identifiers": [{"ID": "a1d4ee8aba494ca", "IDType": "NIST"}]},
@@ -1857,7 +1857,7 @@ clinical_summary_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
             "Destinations": [
                 {
@@ -3811,7 +3811,7 @@ clinical_summary_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -3838,7 +3838,7 @@ clinical_summary_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
             "Logs": [
                 {
@@ -3858,7 +3858,7 @@ clinical_summary_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Session": {
@@ -4028,7 +4028,7 @@ department_query_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Identifier": {
@@ -4048,18 +4048,39 @@ department_query_value_sets = {
 }
 
 organization_query_value_sets = {
-    "organization_query": {
+    "organization": {
         "Meta": {
             "DataModel": "Organization",
             "EventType": "Query",
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
-        "Directory": "",
-        "Identifier": {"ID": "e8wMbBzuMGvZrYASWBHiL8w3", "IDType": "OID"},
+        "Organization": {
+                    "Identifiers": {
+                        "ID": "e8wMbBzuMGvZrYASWBHiL8w3",
+                        "Type":"OID"
+                    },
+                    "Name": None,
+                    "Type": {
+                        "Code": None,
+                        "CodeSystem": None,
+                        "CodeSystemName": None,
+                        "Name": None,
+                        "AltCodes": [],
+                    },
+                    "Address": {
+                        "StreetAddress": None,
+                        "City": None,
+                        "State": None,
+                        "ZIP": None,
+                        "County": None,
+                        "Country": None,
+                    },
+                    "Telecom": [],
+                },
     }
 }
 
@@ -4072,7 +4093,7 @@ medications_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -4361,7 +4382,7 @@ medications_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -4650,7 +4671,7 @@ medications_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -4939,7 +4960,7 @@ medications_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -5146,7 +5167,7 @@ medias_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -5312,7 +5333,7 @@ medias_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -5479,7 +5500,7 @@ medias_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -5644,7 +5665,7 @@ medias_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patients": [
@@ -5671,7 +5692,7 @@ notes_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -5841,7 +5862,7 @@ notes_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -6011,7 +6032,7 @@ notes_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -6179,7 +6200,7 @@ notes_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patients": [
@@ -6206,7 +6227,7 @@ order_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
             "Event": "imaging",
         },
@@ -6524,7 +6545,7 @@ order_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patients": [
@@ -6550,7 +6571,7 @@ order_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -6864,7 +6885,7 @@ order_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -7178,7 +7199,7 @@ order_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -7558,7 +7579,7 @@ patient_admin_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
             "Event": "check-in",
         },
@@ -7880,7 +7901,7 @@ patient_admin_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -8202,7 +8223,7 @@ patient_admin_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -8535,7 +8556,7 @@ patient_admin_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -8728,7 +8749,7 @@ patient_admin_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -8930,7 +8951,7 @@ patient_admin_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -8977,7 +8998,7 @@ patient_admin_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -9299,7 +9320,7 @@ patient_admin_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -9621,7 +9642,7 @@ patient_admin_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "PatientClasses": ["Inpatient"],
@@ -9636,7 +9657,7 @@ patient_admin_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -9979,7 +10000,7 @@ patient_admin_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -10027,7 +10048,7 @@ patient_admin_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -10350,7 +10371,7 @@ patient_admin_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "PatientClasses": [],
@@ -10380,7 +10401,7 @@ provider_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Providers": [
@@ -10493,7 +10514,7 @@ provider_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Providers": [
@@ -10606,7 +10627,7 @@ provider_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Providers": [
@@ -10718,7 +10739,7 @@ provider_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Providers": [
@@ -10829,7 +10850,7 @@ provider_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Provider": {
@@ -10849,7 +10870,7 @@ result_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -11186,7 +11207,7 @@ result_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -11523,7 +11544,7 @@ result_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patients": [{"Identifiers": [{"ID": "000000001", "IDType": "EHRID"}]}],
@@ -11548,7 +11569,7 @@ scheduling_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -11728,7 +11749,7 @@ scheduling_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -11910,7 +11931,7 @@ scheduling_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -12089,7 +12110,7 @@ scheduling_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -12270,7 +12291,7 @@ scheduling_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Patient": {
@@ -12450,7 +12471,7 @@ scheduling_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Slots": [
@@ -12492,7 +12513,7 @@ scheduling_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Provider": {
@@ -12578,7 +12599,7 @@ scheduling_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "StartDateTime": "2022-08-01T22:22:16.270Z",
@@ -12661,7 +12682,7 @@ scheduling_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Appointment": {
@@ -12680,7 +12701,7 @@ scheduling_value_sets = {
             "Test": True,
             "Source": {
                 "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-                "Name": "Medarch Customer Identifier Types",
+                "Name": "connectionid",
             },
         },
         "Appointment": {"Providers": 2104, "Departments": None},
@@ -12694,7 +12715,7 @@ patient_search_value_sets = {
         "Test": True,
         "Source": {
             "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-            "Name": "Medarch Customer Identifier Types",
+            "Name": "connectionid",
         },
     },
     "Patient": {
@@ -12740,7 +12761,7 @@ master_value_sets = {
         "Test": True,
         "Source": {
             "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-            "Name": "Medarch Customer Identifier Types",
+            "Name": "connectionid",
         },
     },
     "Patient": {"Identifier": {"ID": 1313, "IDType": "EHRID"}},
@@ -12756,7 +12777,7 @@ advancedmd_create_jobid = {
         "Test": True,
         "Source": {
             "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-            "Name": "Medarch Customer Identifier Types",
+            "Name": "connectionid",
         },
         "Events": [
                 "Patient",
@@ -12778,7 +12799,282 @@ advancedmd_bulk_clinical_summary = {
         "Test": True,
         "Source": {
             "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
-            "Name": "Medarch Customer Identifier Types",
+            "Name": "connectionid",
         }
     }
+}
+
+patient_clinicals = {
+    "push_allergies":{
+        "Meta": {
+            "DataModel": "Clinical Summary",
+            "EventType": "ClinicalPush",
+            "Test": True,
+            "Source": {
+                "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
+                "Name": "connectionid",
+            },
+        },
+        "Patient": {
+            "Identifiers": [
+                {"ID": "a1d4ee8aba494ca", "IDType": "EHRID"}
+            ]
+        },
+        "push_allergies": [
+            {
+                "Type": {
+                    "Code": "419511003",
+                    "CodeSystem": "2.16.840.1.113883.6.96",
+                    "CodeSystemName": "SNOMED CT",
+                    "Name": "Propensity to adverse reaction to drug",
+                    "AltCodes": [],
+                },
+                "Substance": {
+                    "Code": "7982",
+                    "CodeSystem": "2.16.840.1.113883.6.88",
+                    "CodeSystemName": "RxNorm",
+                    "Name": "Penicillin G benzathine",
+                    "AltCodes": [],
+                },
+                "Reaction": [
+                    {
+                        "Code": "28926001",
+                        "CodeSystem": "2.16.840.1.113883.6.96",
+                        "CodeSystemName": "SNOMED CT",
+                        "Name": "Rash",
+                        "AltCodes": [],
+                        "Severity": {
+                            "Code": "255604002",
+                            "CodeSystem": "2.16.840.1.113883.6.96",
+                            "CodeSystemName": "SNOMED CT",
+                            "Name": "Mild",
+                        },
+                        "Text": None,
+                    },
+                    {
+                        "Code": "247472004",
+                        "CodeSystem": "2.16.840.1.113883.6.96",
+                        "CodeSystemName": "SNOMED CT",
+                        "Name": "Hives",
+                        "AltCodes": [],
+                        "Severity": {
+                            "Code": "6736007",
+                            "CodeSystem": "2.16.840.1.113883.6.96",
+                            "CodeSystemName": "SNOMED CT",
+                            "Name": "Moderate",
+                        },
+                        "Text": None,
+                    },
+                ],
+                "Severity": {
+                    "Code": "6736007",
+                    "CodeSystem": "2.16.840.1.113883.6.96",
+                    "CodeSystemName": "SNOMED CT",
+                    "Name": "Moderate",
+                },
+                "Criticality": {
+                    "Code": "CRITH",
+                    "CodeSystem": "2.16.840.1.113883.5.1063",
+                    "CodeSystemName": "ObservationValue",
+                    "Name": "High criticality",
+                },
+                "Status": {
+                    "Code": "73425007",
+                    "CodeSystem": "2.16.840.1.113883.6.96",
+                    "CodeSystemName": "SNOMED CT",
+                    "Name": "Inactive",
+                },
+                "StartDate": None,
+                "EndDate": None,
+                "Comment": None,
+                "Note": [
+                    {"Text": "Noted when patient took penicillin for ear infection."}
+                ],
+            },
+        ]
+    },
+        "push_medications":{
+            "Meta": {
+                "DataModel": "Clinical Summary",
+                "EventType": "ClinicalPush",
+                "Test": True,
+                "Source": {
+                "ID": "45e7a6c4-e65b-421d-8722-f3bf47f4541c",
+                "Name": "connectionid"
+                }
+            },
+            "Patient": {
+                "Identifiers": [
+                {
+                    "ID": "a1d4ee8aba494ca",
+                    "IDType": "EHRID"
+                }
+                ]
+            },
+            "Medications": [
+                {
+                "Prescription": False,
+                "FreeTextSig": None,
+                "Dose": {
+                    "Quantity": "4",
+                    "Units": "mg"
+                },
+                "Rate": {
+                    "Quantity": None,
+                    "Units": None
+                },
+                "Route": {
+                    "Code": "C38288",
+                    "CodeSystem": "2.16.840.1.113883.3.26.1.1",
+                    "CodeSystemName": "NCI Thesaurus",
+                    "Name": "Oral",
+                    "AltCodes": []
+                },
+                "Status": None,
+                "StartDate": "2013-11-11T05:00:00.000Z",
+                "EndDate": None,
+                "Frequency": {
+                    "Period": "8",
+                    "PeriodMax": None,
+                    "Unit": "h",
+                    "EventCode": None,
+                    "InstitutionSpecified": None
+                },
+                "NumberOfRefillsRemaining": None,
+                "IsPRN": None,
+                "Product": {
+                    "Code": "104894",
+                    "CodeSystem": "2.16.840.1.113883.6.88",
+                    "CodeSystemName": "RxNorm",
+                    "Name": "Ondansetron 4 Mg Po Tbdp",
+                    "AltCodes": [
+                    {
+                        "Code": "0378-7732-93",
+                        "CodeSystem": "2.16.840.1.113883.6.69",
+                        "CodeSystemName": "NDC",
+                        "Name": "Ondansetron 4 Mg Po Tbdp"
+                    },
+                    {
+                        "Code": "64695",
+                        "CodeSystem": "2.16.840.1.113883.6.253",
+                        "CodeSystemName": "MDDID",
+                        "Name": "Ondansetron 4 Mg Po Tbdp"
+                    },
+                    ]
+                },
+                "Indications": [],
+                "SupplyOrder": {
+                    "StartDate": None,
+                    "EndDate": None,
+                    "Quantity": None,
+                    "Units": None,
+                    "NumberOfRefillsRemaining": None
+                    }
+                }
+            ]
+        },
+        "push_conditions":
+            {
+                "Meta": {
+                    "DataModel": "Clinical Summary",
+                    "EventType": "ClinicalPush",
+                    "Test": True,
+                    "Source": {
+                    "ID": "45e7a6c4-e65b-421d-8722-f3bf47f4541c",
+                    "Name": "connectionid"
+                    }
+                },
+            "Patient": {
+                "Identifiers": [
+                {
+                    "ID": "a1d4ee8aba494ca",
+                    "IDType": "EHRID"
+                }
+                ]
+            },
+            "Conditions": [
+                {
+                    "StartDate": "2012-08-06T04:00:00.000Z",
+                    "EndDate": "2012-08-06T04:00:00.000Z",
+                    "Code": "233604007",
+                    "CodeSystem": "2.16.840.1.113883.6.96",
+                    "CodeSystemName": "SNOMED CT",
+                    "Name": "Pneumonia",
+                    "AltCodes": [
+                        {
+                            "Code": "J18.9",
+                            "CodeSystem": "2.16.840.1.113883.6.90",
+                            "CodeSystemName": "ICD-10-CM",
+                            "Name": "Pneumonia",
+                        },
+                        {
+                            "Code": "486",
+                            "CodeSystem": "2.16.840.1.113883.6.103",
+                            "CodeSystemName": "ICD-9-CM",
+                            "Name": "Pneumonia",
+                        },
+                    ],
+                    "Category": {
+                        "Code": "409586006",
+                        "CodeSystem": "2.16.840.1.113883.6.96",
+                        "CodeSystemName": "SNOMED CT",
+                        "Name": "Complaint",
+                        "AltCodes": [],
+                    },
+                    "Status": {
+                        "Code": "413322009",
+                        "CodeSystem": "2.16.840.1.113883.6.96",
+                        "CodeSystemName": "SNOMED CT",
+                        "Name": "Resolved",
+                    },
+                    "Comment": None,
+                    "Comments": [],
+                    "HealthStatus": {
+                        "Code": "162467007",
+                        "CodeSystem": "2.16.840.1.113883.6.96",
+                        "CodeSystemName": "SNOMED CT",
+                        "Name": "Symptom Free",
+                        "AltCodes": [],
+                    },
+                }
+            ]
+        }
+}
+
+media = {
+    "Document_new":{
+                "Meta": {
+                    "DataModel": "Clinical Summary",
+                    "EventType": "ClinicalPush",
+                    "Test": True,
+                    "Source": {
+                    "ID": "45e7a6c4-e65b-421d-8722-f3bf47f4541c",
+                    "Name": "connectionid"
+                    }
+                },
+            "Patient": {
+                "Identifiers": [
+                {
+                    "ID": "a1d4ee8aba494ca",
+                    "IDType": "EHRID"
+                }
+                ]
+            },
+            "Provider": {
+                "ID": "4356789876",
+                "IDType": "EHRID"
+            },
+            "Document":{
+                "FileType": "PDF",
+                    "FileName": "SamplePDF",
+                    "FileContents": "<...base 64 file contents...>",
+                    "DocumentType": "Empty File",
+                    "DocumentID": "b169267c-10c9-4fe3-91ae-9ckf5703e90l",
+                    "DocumentDescription": None,
+                    "CreationDateTime": "2017-06-22T19:30:04.387Z",
+                    "ServiceDateTime": "2017-06-22T17:00:00.387Z",
+                    "DirectAddressFrom": "pat.willis@ehrbridge.com",
+                    "DirectAddressTo": "john.aker@ehrbridge.com"
+            }
+    },
 }

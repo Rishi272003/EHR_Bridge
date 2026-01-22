@@ -225,4 +225,5 @@ class VisitQuerTransformer(Transformer):
 
             return self.destination_response
         except Exception as e:
-            return Response({"Error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            self.destination_response.update({"Error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return self.destination_response

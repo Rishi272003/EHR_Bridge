@@ -8,7 +8,7 @@ from django.views.generic import TemplateView
 from drf_spectacular.views import SpectacularAPIView
 from drf_spectacular.views import SpectacularSwaggerView
 from rest_framework.authtoken.views import obtain_auth_token
-from services import views as ecw_views
+from services.ehr.views import ecw_callback
 
 urlpatterns = [
     path("", TemplateView.as_view(template_name="pages/home.html"), name="home"),
@@ -23,7 +23,7 @@ urlpatterns = [
     path("users/", include("ehr_bridge.users.urls", namespace="users")),
     path("accounts/", include("allauth.urls")),
     # OAuth callback - must be at root level for external redirects
-    path("callback-uri", ecw_views.ecw_callback, name="ecw_callback"),
+    path("callback-uri", ecw_callback, name="ecw_callback"),
     # Your stuff: custom urls includes go here
     # ...
     # Media files

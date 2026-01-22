@@ -23,9 +23,7 @@ class QueryTransformer(Transformer):
         try:
             patient = Patient(self.connection_obj)
             patient.authenticate()
-            print("source_data",self.source_data)
             demographics  = self.source_data.get("Patient",{}).get("Demographics",{})
-            print("demographics",demographics)
             if demographics.get("FirstName") and demographics.get("LastName"):
                 self.destination_json["name"] = (
                     f"{demographics.get('LastName')} {demographics.get('FirstName')}"
@@ -42,21 +40,13 @@ class QueryTransformer(Transformer):
             if self.source_data["Meta"].get("Test"):
                 self.destination_response["Meta"]["Raw"].append(patient_response)
 
-            print(f"Patient response status: {status_code}")
-            print(f"Patient response type: {type(patient_response)}")
-            print(f"Patient response keys: {patient_response.keys() if isinstance(patient_response, dict) else 'Not a dict'}")
-
             if status_code == 200:
                 # Handle FHIR Bundle response
                 entries = patient_response.get("entry", [])
-                print(f"Number of entries found: {len(entries)}")
-
                 if entries:
                     for entry_item in entries:
                         # Extract Patient resource from FHIR Bundle entry
                         patient_resource = entry_item.get("resource", {})
-                        print(f"Patient resource type: {patient_resource.get('resourceType')}")
-
                         if (
                             not patient_resource
                             or patient_resource.get("resourceType") != "Patient"
@@ -154,7 +144,7 @@ class QueryTransformer(Transformer):
                                 break
 
                         # If no usual identifier, try secondary
-                        if patient_identifier == patient_id:
+                        if patient_identifier != patient_id:
                             for identifier in identifiers:
                                 if identifier.get("use") == "secondary":
                                     patient_identifier = identifier.get("value", patient_id)

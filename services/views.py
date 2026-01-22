@@ -77,7 +77,6 @@ class PatientSearch(APIView):
         )
     ],
     )
-
     def post(self,request):
         source_data = request.data
         try:
@@ -257,7 +256,8 @@ class AppointmentRescheduleAPIView(APIView):
         data = serializer.validated_data
 
         try:
-            connection_obj = EHRConnection.objects.filter(uuid=data["connection_id"]).first()
+            connection_id = data.get("Meta",{}).get("Source",{}).get("ID")
+            connection_obj = EHRConnection.objects.filter(uuid=connection_id).first()
             if not connection_obj:
                 return Response(
                     {"detail": "Connection not found"},
@@ -448,7 +448,7 @@ class MedicationNewAPIView(APIView):
         examples=[
             OpenApiExample(
                 name="Medication-New",
-                value=medications_value_sets.get("new_medication"),
+                value=patient_clinicals.get("push_medications"),
             )
         ],
     )
@@ -479,7 +479,7 @@ class CreateMediaAPIView(APIView):
         examples=[
             OpenApiExample(
                 name="Media-New",
-                value=medias_value_sets.get("new_media"),
+                value=media.get("Document_new"),
             )
         ],
     )
@@ -492,7 +492,7 @@ class CreateMediaAPIView(APIView):
             connection_data = model_to_dict(connection_obj)
             source_data = {"type":"new_media","media_data":request_body}
             transformer_response = get_media_transformer(connection_obj,connection_data,source_data)
-            return Response({"detail": "Media created successfully", "data": transformer_response}, status=status.HTTP_201_CREATED)
+            return Response(transformer_response, status=status.HTTP_201_CREATED)
         except Exception as e:
             return Response({"detail": f"Something went wrong: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -511,11 +511,11 @@ class GetMediaAPIView(APIView):
         examples=[
             OpenApiExample(
                 name="Media-Get",
-                value=medias_value_sets.get("get_media"),
+                value=medias_value_sets.get("media_query"),
             )
         ],
     )
-    def get(self,request):
+    def post(self,request):
         try:
             request_body = request.data
             connection_obj = EHRConnection.objects.filter(uuid=request_body["connection_id"]).first()
@@ -528,187 +528,131 @@ class GetMediaAPIView(APIView):
         except Exception as e:
             return Response({"detail": f"Something went wrong: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-class PushClinicalSummaryAPIView(APIView):
+class CreateAllergyAPIView(APIView):
     permission_classes = [IsAuthenticated]
     @extend_schema(
-        summary="Push Clinical Summary",
-        description="Push Clinical Summary",
+        summary="Create New Allergy",
+        description="Create New Allergy",
         request=inline_serializer(
-            name="Clinical-Summary-Push",
+            name="Allergy-New",
             fields={
                 "Source_json": serializers.CharField(),
             },
         ),
         examples=[
             OpenApiExample(
-                name="Clinical-Summary-Push",
-                value=clinical_summary_value_sets.get("push_clinical_summary"),
+                name="Allergy-New",
+                value=patient_clinicals.get("push_allergies"),
             )
         ],
     )
     def post(self,request):
         try:
             request_body = request.data
-            connection_obj = EHRConnection.objects.filter(uuid=request_body["connection_id"]).first()
+            connection_id = request_body.get("Meta",{}).get("Source",{}).get("ID")
+            if not connection_id:
+                return Response({"detail": "Connection ID not found"}, status=status.HTTP_400_BAD_REQUEST)
+            connection_obj = EHRConnection.objects.filter(uuid=connection_id).first()
             if not connection_obj:
                 return Response({"detail": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)
-            transformer_response = clinicals_push_transformer(connection_obj,request_body)
-            return Response({"detail": "Clinical summary pushed successfully", "data": transformer_response}, status=status.HTTP_200_OK)
+            transformer_response = clinicals_push_transformer(connection_obj,request_body,"allergies")
+            return Response(transformer_response, status=status.HTTP_201_CREATED)
         except Exception as e:
             return Response({"detail": f"Something went wrong: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-@csrf_exempt
-@require_http_methods(["GET"])
-def ecw_callback(request):
-    """
-    ECW OAuth callback handler.
-    Receives authorization code from ECW and exchanges it for access token.
-    """
-    code = request.GET.get("code")
-    state = request.GET.get("state")
 
-    if not code:
-        return JsonResponse({"error": "Authorization code not provided"}, status=400)
-
-    if not state:
-        return JsonResponse({"error": "State parameter not provided"}, status=400)
-
-    try:
-        state_parts = state.split(",")
-
-        if len(state_parts) >= 3:
-            connection_uuid = state_parts[0]
-            ehr_name = state_parts[1]  # eclinicalworks
-            app_type = state_parts[2]  # provider or patient
-        else:
-            # Fallback: try to get connection by UUID only
-            connection_uuid = state_parts[0]
-            ehr_name = "eclinicalworks"
-            app_type = "provider"  # default
-
-        # Get ECW connection directly by UUID
-        try:
-            ecw_connection = EHRConnection.objects.get(
-                uuid=connection_uuid, ehr_name=ehr_name
-            )
-        except EHRConnection.DoesNotExist:
-            return JsonResponse({"error": "ECW connection not found"}, status=404)
-
-        # Prepare headers
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
-        }
-
-        # Prepare Basic Auth header (client_id:client_secret)
-        client_id = ecw_connection.client_id
-        client_secret = ecw_connection.client_secret or ""
-
-        # Create Basic Auth credentials
-        auth_credentials = base64.b64encode(
-            f"{client_id}:{client_secret}".encode()
-        ).decode()
-        headers["Authorization"] = f"Basic {auth_credentials}"
-
-        # Prepare payload
-        # Use redirect_uri from connection to ensure it matches the authorization request
-        redirect_uri = ecw_connection.redirect_uri or request.build_absolute_uri(
-            "/callback-uri"
-        )
-        payload = {
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": redirect_uri,
-        }
-
-        # Add code_verifier if available (PKCE flow)
-        if ecw_connection.code_verifier:
-            payload["code_verifier"] = ecw_connection.code_verifier
-
-        # Exchange code for token
-        try:
-            print("token_url>>>",ecw_connection.token_url)
-            print("headers>>>",headers)
-            print("payload>>>",payload)
-            response = requests.post(
-                ecw_connection.token_url,
-                headers=headers,
-                data=payload,
-            )
-            print("response>>>",response.json())
-            response.raise_for_status()
-            try:
-                token_data = response.json()
-            except ValueError:
-                # If response is not JSON, return error
-                return JsonResponse(
-                    {
-                        "error": "Invalid response from token endpoint",
-                        "response": response.text[:500],  # Limit response length
-                    },
-                    status=500,
-                )
-        except requests.exceptions.HTTPError as e:
-            # Handle HTTP errors (4xx, 5xx)
-            error_response = None
-            if hasattr(e.response, "text"):
-                try:
-                    error_response = e.response.json()
-                except ValueError:
-                    error_response = {"error": e.response.text[:500]}
-            return JsonResponse(
-                {
-                    "error": "Failed to exchange code for token",
-                    "status_code": (
-                        e.response.status_code if hasattr(e, "response") else None
-                    ),
-                    "details": error_response or str(e),
-                },
-                status=e.response.status_code if hasattr(e, "response") else 500,
-            )
-        except requests.exceptions.RequestException as e:
-            return JsonResponse(
-                {
-                    "error": "Failed to exchange code for token",
-                    "details": str(e),
-                },
-                status=500,
-            )
-
-        # Save tokens to connection
-        ecw_connection.access_token = token_data.get("access_token")
-        ecw_connection.refresh_token = token_data.get("refresh_token")
-        ecw_connection.access_token_generated_at = timezone.now()
-        ecw_connection.save()
-
-
-        # Redirect to org_redirect_uri if set, otherwise return JSON
-        if ecw_connection.org_redirect_uri:
-            redirect_url = (
-                ecw_connection.org_redirect_uri
-                + "?"
-                + urllib.parse.urlencode(
-                    {
-                        "status": "success",
-                        "access_token": token_data.get("access_token"),
-                    }
-                )
-            )
-            return redirect(redirect_url)
-
-        # Return JSON response with token data
-        return JsonResponse(
-            {
-                "status": "success",
-                "access_token": token_data.get("access_token"),
-                "token_type": token_data.get("token_type"),
-                "expires_in": token_data.get("expires_in"),
-                "refresh_token": token_data.get("refresh_token"),
-                "scope": token_data.get("scope"),
+class CreateDiagnosisAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    @extend_schema(
+        summary="Create New Diagnosis",
+        description="Create New Diagnosis",
+        request=inline_serializer(
+            name="Diagnosis-New",
+            fields={
+                "Source_json": serializers.CharField(),
             },
-            status=200,
-        )
+        ),
+        examples=[
+            OpenApiExample(
+                name="Diagnosis-New",
+                value=patient_clinicals.get("push_conditions"),
+            )
+        ],
+    )
+    def post(self,request):
+        try:
+            request_body = request.data
+            connection_id = request_body.get("Meta",{}).get("Source",{}).get("ID")
+            if not connection_id:
+                return Response({"detail": "Connection ID not found"}, status=status.HTTP_400_BAD_REQUEST)
+            connection_obj = EHRConnection.objects.filter(uuid=connection_id).first()
+            if not connection_obj:
+                return Response({"detail": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)
+            transformer_response = clinicals_push_transformer(connection_obj,request_body,"diagnoses")
+            return Response(transformer_response, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({"detail": f"Something went wrong: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    except Exception as e:
-        return JsonResponse(
-            {"error": "Internal server error", "details": str(e)}, status=500
-        )
+class OrganizationQueryAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    @extend_schema(
+        summary="Query Organizations",
+        description="Query Organizations",
+        request=inline_serializer(
+            name="Organization-Query",
+            fields={
+                "Source_json": serializers.CharField(),
+            },
+        ),
+        examples=[
+            OpenApiExample(
+                name="Organization-Query",
+                value=organization_query_value_sets.get("organization"),
+            )
+        ],
+    )
+    def post(self,request):
+        try:
+            request_body = request.data
+            connection_id = request_body.get("Meta",{}).get("Source",{}).get("ID")
+            if not connection_id:
+                return Response({"detail": "Connection ID not found"}, status=status.HTTP_400_BAD_REQUEST)
+            connection_obj = EHRConnection.objects.filter(uuid=connection_id).first()
+            if not connection_obj:
+                return Response({"detail": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)
+            transformer_response = get_organization_transformer(connection_obj,request_body)
+            return Response(transformer_response, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"detail": f"Something went wrong: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class CreateOrganizationAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    @extend_schema(
+        summary="Create New Organization",
+        description="Create New Organization",
+        request=inline_serializer(
+            name="Organization-New",
+            fields={
+                "Source_json": serializers.CharField(),
+            },
+        ),
+        examples=[
+            OpenApiExample(
+                name="Organization-New",
+                value=organization_query_value_sets.get("organization"),
+            )
+        ],
+    )
+    def post(self,request):
+        try:
+            request_body = request.data
+            connection_id = request_body.get("Meta",{}).get("Source",{}).get("ID")
+            if not connection_id:
+                return Response({"detail": "Connection ID not found"}, status=status.HTTP_400_BAD_REQUEST)
+            connection_obj = EHRConnection.objects.filter(uuid=connection_id).first()
+            if not connection_obj:
+                return Response({"detail": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)
+            transformer_response = create_organization_transformer(connection_obj,request_body)
+            return Response(transformer_response, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({"detail": f"Something went wrong: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

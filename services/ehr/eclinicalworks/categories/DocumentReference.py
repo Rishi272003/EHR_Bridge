@@ -1,10 +1,10 @@
-from medarch_engine.ehrbridge.ecw.client import ECWClient
-from medarch_engine.ehrbridge.ecw.urls import ECW_URLS
+from services.ehr.eclinicalworks.client import ECWClient
+from services.ehr.eclinicalworks.urls import ECW_URLS
 
 
 class DocumentReference(ECWClient):
-    def __init__(self, customer_id, connection_id, source_json=None) -> None:
-        super().__init__(customer_id, connection_id, source_json)
+    def __init__(self, connection_obj) -> None:
+        super().__init__(connection_obj)
 
     def get_document_by_id(self, document_id):
         """
