@@ -12,6 +12,8 @@ from services.ehr.eclinicalworks.transformers.media import MediaNewTransformer a
 from services.ehr.eclinicalworks.transformers.media import MediaGetTransformer as ECWMediaGetTransformer
 from services.ehr.eclinicalworks.transformers.organization import OrganizationQueryTransformer as ECWOrganizationQueryTransformer
 from services.ehr.eclinicalworks.transformers.organization import OrganizationCreateTransformer as ECWOrganizationCreateTransformer
+from services.ehr.eclinicalworks.transformers.practitioner import PractitionerQueryTransformer as ECWPractitionerQueryTransformer
+from services.ehr.eclinicalworks.transformers.document_reference import DocumentReferenceQueryTransformer as ECWDocumentReferenceQueryTransformer
 
 def get_query_transformer(connection_obj,source_data):
     response = None
@@ -50,12 +52,16 @@ def get_visit_transformer(connection_obj, source_data):
             response = visitQ_obj.transform()
     return response
 
-def get_providers_transformer(connection_obj,connection_data,source_data):
+def get_providers_transformer(connection_obj, source_data):
     response = None
-    ehr_name = connection_obj.ehr_name if hasattr(connection_obj,"ehr_name") else None
-    if ehr_name=="athena":
-        providers_obj = ProvidersTransformer(connection_obj,connection_data,source_data)
-        response = providers_obj.transform()
+    ehr_name = connection_obj.ehr_name if hasattr(connection_obj, "ehr_name") else None
+    match ehr_name:
+        case "athena":
+            providers_obj = ProvidersTransformer(connection_obj, {}, source_data)
+            response = providers_obj.transform()
+        case "eclinicalworks":
+            providers_obj = ECWPractitionerQueryTransformer(connection_obj, source_data)
+            response = providers_obj.transform()
     return response
 
 def get_patient_admin_transformer(connection_obj,connection_data,source_data):
@@ -110,4 +116,13 @@ def create_organization_transformer(connection_obj,source_data):
         case "eclinicalworks":
             organization_obj = ECWOrganizationCreateTransformer(connection_obj,source_data)
             response = organization_obj.transform()
+    return response
+
+def get_document_reference_transformer(connection_obj, source_data):
+    response = None
+    ehr_name = connection_obj.ehr_name if hasattr(connection_obj, "ehr_name") else None
+    match ehr_name:
+        case "eclinicalworks":
+            doc_ref_obj = ECWDocumentReferenceQueryTransformer(connection_obj, source_data)
+            response = doc_ref_obj.transform()
     return response

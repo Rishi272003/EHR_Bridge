@@ -5,6 +5,7 @@ urlpatterns = [
     # Patients
     path("patient/patient-query/", PatientQueryAPIView.as_view(), name="Patient_query"),
     path("patient/patient-search/", PatientSearch.as_view(), name="patient_search"),
+    path("patient/new-patient/",NewPatientAPIView.as_view(), name="new_patient"),
     # Clinical Summary
     path("clinical-summary/create-allergy/", CreateAllergyAPIView.as_view(), name="create_allergy"),
     path("clinical-summary/create-patient-diagnosis/", CreateDiagnosisAPIView.as_view(), name="create_medication"),
@@ -14,10 +15,8 @@ urlpatterns = [
     path("appointments/cancel/", CancelAppointmentAPIView.as_view(), name="appointments_cancel"),
     path("appointments/reschedule/", AppointmentRescheduleAPIView.as_view(), name="appointments_reschedule"),
     # Providers
-    path("provider/providers/",AllProvidersAPIView.as_view(), name="all_providers"),
-    path("provider/by-id/",ProviderByIdAPIView.as_view(), name="provider_by_id"),
+    path("provider/query/",ProviderQueryAPIView.as_view(), name="provider_query"),
     path("provider/create/",CreateProviderAPIView.as_view(), name="create_provider"),
-    path("patient/new-patient/",NewPatientAPIView.as_view(), name="new_patient"),
     # Medications
     path("medication/medication-new/",MedicationNewAPIView.as_view(), name="medication_new"),
     # Media
@@ -28,4 +27,6 @@ urlpatterns = [
     # Organizations
     path("organization/organization-query/", OrganizationQueryAPIView.as_view(), name="organization_query"),
     path("organization/create-organization/", CreateOrganizationAPIView.as_view(), name="create_organization"),
+    # Document References
+    path("document-reference/query/", DocumentReferenceQueryAPIView.as_view(), name="document_reference_query"),
 ]

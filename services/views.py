@@ -329,32 +329,37 @@ class VisitQueryAPIView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-class AllProvidersAPIView(APIView):
+class ProviderQueryAPIView(APIView):
     permission_classes = [IsAuthenticated]
-
     @extend_schema(
-        description="Get all providers",
-        parameters=[
-            OpenApiParameter(
-                name="connection_id",
-                description="Connection ID",
-                required=True,
-                type=str
+        summary="Query Providers/Practitioners",
+        description="Query Providers/Practitioners from EHR",
+        request=inline_serializer(
+            name="Provider-Query",
+            fields={
+                "Source_json": serializers.CharField(),
+            },
+        ),
+        examples=[
+            OpenApiExample(
+                name="Provider-Query",
+                value=provider_value_sets.get("provider_query"),
             )
-        ]
+        ],
     )
-    def get(self,request):
-        connection_id = request.query_params.get("connection_id")
+    def post(self, request):
+        source_data = request.data
         try:
+            connection_id = source_data.get("Meta", {}).get("Source", {}).get("ID")
+            if not connection_id:
+                return Response({"detail": "Connection ID not found"}, status=status.HTTP_400_BAD_REQUEST)
             connection_obj = EHRConnection.objects.filter(uuid=connection_id).first()
             if not connection_obj:
                 return Response({"detail": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)
-            connection_data = model_to_dict(connection_obj)
-            source_data = {"type":"all"}
-            transformer = get_providers_transformer(connection_obj,connection_data,source_data)
+            transformer_response = get_providers_transformer(connection_obj, source_data)
+            return Response(transformer_response, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"detail": f"Something went wrong: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        return Response({"detail": "Providers retrieved successfully", "data": transformer}, status=status.HTTP_200_OK)
 
 class ProviderByIdAPIView(APIView):
     permission_classes = [IsAuthenticated]
@@ -654,5 +659,68 @@ class CreateOrganizationAPIView(APIView):
                 return Response({"detail": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)
             transformer_response = create_organization_transformer(connection_obj,request_body)
             return Response(transformer_response, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({"detail": f"Something went wrong: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class DocumentReferenceQueryAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    @extend_schema(
+        summary="Query Document References",
+        description="""Query Document References from EHR.
+
+        Supported search parameters:
+        - Document.Identifiers[0].ID: Get document by specific ID
+        - Patient.Identifiers[0].ID: Get documents for a specific patient
+        - Document.Category: Category code (e.g., 'clinical-note')
+        - Document.Type.Code: Document type LOINC code (e.g., '34133-9')
+        - Document.Date.Start/End: Date range filter
+        - Document.EncounterID: Get visit summary for specific encounter
+        """,
+        request=inline_serializer(
+            name="DocumentReference-Query",
+            fields={
+                "Source_json": serializers.CharField(),
+            },
+        ),
+        examples=[
+            OpenApiExample(
+                name="DocumentReference-Query-ByPatient",
+                value={
+                    "Meta": {
+                        "DataModel": "DocumentReference",
+                        "EventType": "Query",
+                        "Test": True,
+                        "Source": {
+                            "ID": "connection-uuid-here",
+                            "Name": "connectionid"
+                        }
+                    },
+                    "Patient": {
+                        "Identifiers": [{"ID": "patient-id-here"}]
+                    },
+                    "Document": {
+                        "Category": "clinical-note",
+                        "Type": {"Code": "34133-9"},
+                        "Date": {
+                            "Start": "2024-01-01",
+                            "End": "2024-12-31"
+                        }
+                    }
+                }
+            )
+        ],
+    )
+    def post(self, request):
+        try:
+            request_body = request.data
+            connection_id = request_body.get("Meta", {}).get("Source", {}).get("ID")
+            if not connection_id:
+                return Response({"detail": "Connection ID not found"}, status=status.HTTP_400_BAD_REQUEST)
+            connection_obj = EHRConnection.objects.filter(uuid=connection_id).first()
+            if not connection_obj:
+                return Response({"detail": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)
+            transformer_response = get_document_reference_transformer(connection_obj, request_body)
+            return Response(transformer_response, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"detail": f"Something went wrong: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

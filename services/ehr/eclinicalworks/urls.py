@@ -67,7 +67,7 @@ ECW_URLS = {
         "get_organization": {
             "method": "GET",
             "path": "/Organization",
-            "description": "search for organization for given organization id",
+            "description": "search for organization for given organization_id/name/type",
         }
     },
     "Location": {
@@ -80,18 +80,13 @@ ECW_URLS = {
     "Practitioner": {
         "get_practitioner": {
             "method": "GET",
-            "path": "/{practiceid}/Practitioner",
-            "description": "Search for Practitioner for a given practitioner id",
-        },
-        "search_practitioner": {
-            "method": "GET",
-            "path": "/{practiceid}/Practitioner",
-            "description": "Search for Practitioner that meet given query parameters",
+            "path": "/Practitioner",
+            "description": "Search for Practitioner - returns all practitioners if no params",
         },
         "get_practitioner_by_id": {
             "method": "GET",
-            "path": "/{practiceid}/Practitioner",
-            "description": "Search for Practitioner for a given practitioner id",
+            "path": "/Practitioner/{practitioner_id}",
+            "description": "Get specific Practitioner by ID",
         },
     },
     "DiagnosticReport": {
