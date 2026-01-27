@@ -48,7 +48,7 @@ class EHRConnection(BaseModel):
 
     client_assertion = models.CharField(max_length=2084,blank=True,null=True)
     ehr_environment = models.CharField(
-        choices=ENVIRONMENT_CHOICE, max_length=50, null=True, blank=True
+        choices=ENVIRONMENT_CHOICE, max_length=50, null=True, blank=True,default="sandbox"
     )
     connection_status = models.CharField(
         choices=CONNECTION_STATUS, max_length=50, blank=True, default="active"

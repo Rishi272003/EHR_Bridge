@@ -23,7 +23,7 @@ urlpatterns = [
     path("users/", include("ehr_bridge.users.urls", namespace="users")),
     path("accounts/", include("allauth.urls")),
     # OAuth callback - must be at root level for external redirects
-    path("callback-uri", ecw_callback, name="ecw_callback"),
+    path("api/redirect-uri", ecw_callback, name="ecw_callback"),
     # Your stuff: custom urls includes go here
     # ...
     # Media files
