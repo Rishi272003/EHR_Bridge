@@ -14,6 +14,8 @@ clinical_summary_value_sets = {
                 "Vitals",
                 "Insurances",
                 "Medications",
+                "Conditions",
+                "LabResults",
             ],
         },
         "Patient": {"Identifiers": [{"ID": "1313", "IDType": "EHRID"}]},
@@ -12720,9 +12722,7 @@ patient_search_value_sets = {
     },
     "Patient": {
         "Identifiers": [
-            {"ID": "0000000001", "IDType": "MR"},
-            {"ID": "e167267c-16c9-4fe3-96ae-9cff5703e90a", "IDType": "EHRID"},
-            {"ID": "a1d4ee8aba494ca", "IDType": "NIST"},
+            {"ID": "e167267c-16c9-4fe3-96ae-9cff5703e90a", "IDType": "EHRID"}
         ],
         "Demographics": {
             "FirstName": "Myra50",

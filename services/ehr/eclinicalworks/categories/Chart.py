@@ -49,6 +49,46 @@ class Chart(ECWClient):
             },
         )
 
+    def get_patient_conditions(self, patient_id=None, condition_id=None, category=None, onset_date_start=None, onset_date_end=None):
+        """
+        Fetch patient conditions from ECW Condition API.
+
+        Supported search parameters:
+        - condition_id: Get specific condition by ID
+        - patient_id: Get all conditions for a patient
+        - category: Filter by category (problem-list-item, encounter-diagnosis, health-concern)
+        - onset_date_start: Filter by onset date >= this date (format: YYYY-MM-DD)
+        - onset_date_end: Filter by onset date <= this date (format: YYYY-MM-DD)
+        """
+        url = self.build_url(
+            ECW_URLS["Chart"]["get_patient_problem"]["path"],
+        )
+
+        params = {}
+
+        # If condition_id provided, fetch specific condition
+        if condition_id:
+            params["_id"] = condition_id
+
+        # Add patient ID if provided
+        if patient_id:
+            params["patient"] = patient_id
+
+        # Add category filter if provided
+        if category:
+            params["category"] = category
+
+        # Add onset date filters if provided
+        if onset_date_start and onset_date_end:
+            # Both start and end dates - use ge and le
+            params["onset-date"] = [f"ge{onset_date_start}", f"le{onset_date_end}"]
+        elif onset_date_start:
+            params["onset-date"] = f"ge{onset_date_start}"
+        elif onset_date_end:
+            params["onset-date"] = f"le{onset_date_end}"
+
+        return self.get(url, params=params)
+
     def get_patient_encounter(self, patientid=None, visit_number=None, start_date=None, end_date=None):
         # Path doesn't include {practiceid}, it's already in base_url
         url = self.build_url(

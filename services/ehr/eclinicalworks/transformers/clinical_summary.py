@@ -1,3 +1,6 @@
+import logging
+import uuid
+import json
 from datetime import datetime
 
 from rest_framework import status
@@ -8,8 +11,10 @@ from services.ehr.eclinicalworks.categories.Chart import Chart
 from services.ehr.eclinicalworks.categories.Patient import Patient
 from services.ehr.eclinicalworks.categories.DiagnosticReport import DiagnosticReport
 from services.schemas import *
-import uuid
-import json
+
+logger = logging.getLogger(__name__)
+
+
 class PatientQueryTransformer(Transformer):
     def __init__(self, connection_obj, source_data):
         self.source_json = source_data
@@ -1066,6 +1071,224 @@ class PatientQueryTransformer(Transformer):
                     else:
                         self.destination_response.update(vitals_response)
                         self.destination_response.update({"statuscode": status_code})
+
+                # Conditions/Problems Data
+                if event == "conditions" or event == "problems" or event == "diagnoses" or event == "all":
+                    conditions_json = {"Problems": []}
+
+                    # Get category filter from source if provided (defaults to None for all conditions)
+                    condition_category = self.source_json.get("ConditionCategory")
+
+                    # Get onset date filters from source if provided
+                    onset_date_start = self.source_json.get("StartDate")
+                    onset_date_end = self.source_json.get("EndDate")
+
+                    (
+                        conditions_response,
+                        status_code,
+                    ) = patients_chart.get_patient_conditions(
+                        patient_id=self.patient_id,
+                        category=condition_category,
+                        onset_date_start=onset_date_start,
+                        onset_date_end=onset_date_end
+                    )
+
+                    # Add raw response if Test mode is enabled
+                    if self.source_json.get("Meta", {}).get("Test"):
+                        self.destination_response["Meta"]["Raw"].append(conditions_response)
+
+                    if status_code == 200:
+                        # Check if response is a FHIR Bundle
+                        if (
+                            isinstance(conditions_response, dict)
+                            and conditions_response.get("resourceType") == "Bundle"
+                        ):
+                            entries = conditions_response.get("entry", [])
+
+                            # Handle empty Bundle (total: 0)
+                            if conditions_response.get("total", 0) == 0 or not entries:
+                                # Return empty Problems array
+                                self.destination_response.update(conditions_json)
+                            else:
+                                # Process each Condition resource from Bundle
+                                for entry_item in entries:
+                                    condition_resource = entry_item.get("resource", {})
+
+                                    if (
+                                        not condition_resource
+                                        or condition_resource.get("resourceType") != "Condition"
+                                    ):
+                                        continue
+
+                                    # Extract Condition ID
+                                    condition_id = condition_resource.get("id", "")
+
+                                    # Extract clinical status
+                                    clinical_status = condition_resource.get("clinicalStatus", {})
+                                    clinical_status_codings = clinical_status.get("coding", [])
+                                    clinical_status_code = None
+                                    clinical_status_display = clinical_status.get("text")
+
+                                    if clinical_status_codings:
+                                        first_status_coding = clinical_status_codings[0]
+                                        clinical_status_code = first_status_coding.get("code")
+                                        if not clinical_status_display:
+                                            clinical_status_display = first_status_coding.get("display")
+
+                                    # Extract verification status
+                                    verification_status = condition_resource.get("verificationStatus", {})
+                                    verification_status_codings = verification_status.get("coding", [])
+                                    verification_status_code = None
+                                    verification_status_display = verification_status.get("text")
+
+                                    if verification_status_codings:
+                                        first_ver_coding = verification_status_codings[0]
+                                        verification_status_code = first_ver_coding.get("code")
+                                        if not verification_status_display:
+                                            verification_status_display = first_ver_coding.get("display")
+
+                                    # Extract category
+                                    categories = condition_resource.get("category", [])
+                                    category_code = None
+                                    category_display = None
+
+                                    if categories:
+                                        first_category = categories[0]
+                                        category_codings = first_category.get("coding", [])
+                                        category_display = first_category.get("text")
+
+                                        if category_codings:
+                                            first_cat_coding = category_codings[0]
+                                            category_code = first_cat_coding.get("code")
+                                            if not category_display:
+                                                category_display = first_cat_coding.get("display")
+
+                                    # Extract code (diagnosis code)
+                                    code_data = condition_resource.get("code", {})
+                                    code_codings = code_data.get("coding", [])
+                                    code_text = code_data.get("text")
+
+                                    # Process all codings to get ICD-10 and SNOMED codes
+                                    icd10_code = None
+                                    icd10_system = None
+                                    snomed_code = None
+                                    snomed_system = None
+                                    primary_code = None
+                                    primary_system = None
+                                    primary_display = None
+
+                                    for coding in code_codings:
+                                        system = coding.get("system", "")
+                                        code_val = coding.get("code")
+                                        display = coding.get("display")
+
+                                        if "icd-10" in system.lower():
+                                            icd10_code = code_val
+                                            icd10_system = system
+                                            # Use ICD-10 as primary if available
+                                            if not primary_code:
+                                                primary_code = code_val
+                                                primary_system = system
+                                                primary_display = display
+                                        elif "snomed" in system.lower():
+                                            snomed_code = code_val
+                                            snomed_system = system
+                                        else:
+                                            # Fallback to first coding
+                                            if not primary_code:
+                                                primary_code = code_val
+                                                primary_system = system
+                                                primary_display = display
+
+                                    # Use ICD-10 code as primary, then SNOMED, then fallback
+                                    if icd10_code:
+                                        primary_code = icd10_code
+                                        primary_system = icd10_system
+                                    elif snomed_code:
+                                        primary_code = snomed_code
+                                        primary_system = snomed_system
+
+                                    # Extract dates
+                                    recorded_date = condition_resource.get("recordedDate")
+                                    onset_datetime = condition_resource.get("onsetDateTime")
+                                    abatement_datetime = condition_resource.get("abatementDateTime")
+
+                                    # Extract encounter reference
+                                    encounter_ref = condition_resource.get("encounter", {})
+                                    encounter_id = None
+                                    if isinstance(encounter_ref, dict) and encounter_ref.get("reference"):
+                                        encounter_id = encounter_ref.get("reference", "").replace("Encounter/", "")
+
+                                    # Extract recorder reference
+                                    recorder_ref = condition_resource.get("recorder", {})
+                                    recorder_id = None
+                                    if isinstance(recorder_ref, dict) and recorder_ref.get("reference"):
+                                        recorder_id = recorder_ref.get("reference", "").replace("Practitioner/", "")
+
+                                    # Build the condition object
+                                    condition_obj = {
+                                        "Identifiers": [
+                                            {
+                                                "ID": condition_id,
+                                                "IDType": "ConditionID",
+                                            }
+                                        ],
+                                        "Code": primary_code,
+                                        "CodeSystem": primary_system,
+                                        "CodeSystemName": (
+                                            "ICD-10-CM" if primary_system and "icd-10" in primary_system.lower()
+                                            else "SNOMED CT" if primary_system and "snomed" in primary_system.lower()
+                                            else None
+                                        ),
+                                        "Name": code_text or primary_display,
+                                        "Category": {
+                                            "Code": category_code,
+                                            "Name": category_display,
+                                        },
+                                        "ClinicalStatus": {
+                                            "Code": clinical_status_code,
+                                            "Name": clinical_status_display,
+                                        },
+                                        "VerificationStatus": {
+                                            "Code": verification_status_code,
+                                            "Name": verification_status_display,
+                                        },
+                                        "OnsetDate": onset_datetime,
+                                        "RecordedDate": recorded_date,
+                                        "AbatementDate": abatement_datetime,
+                                        "Encounter": {
+                                            "ID": encounter_id,
+                                        } if encounter_id else None,
+                                        "Recorder": {
+                                            "ID": recorder_id,
+                                        } if recorder_id else None,
+                                        "AlternateCodes": [],
+                                    }
+
+                                    # Add alternate codes (ICD-10 and SNOMED)
+                                    if icd10_code:
+                                        condition_obj["AlternateCodes"].append({
+                                            "Code": icd10_code,
+                                            "CodeSystem": icd10_system,
+                                            "CodeSystemName": "ICD-10-CM",
+                                        })
+                                    if snomed_code:
+                                        condition_obj["AlternateCodes"].append({
+                                            "Code": snomed_code,
+                                            "CodeSystem": snomed_system,
+                                            "CodeSystemName": "SNOMED CT",
+                                        })
+
+                                    conditions_json["Problems"].append(condition_obj)
+
+                                self.destination_response.update(conditions_json)
+                        else:
+                            # Legacy format - try to handle non-Bundle response
+                            self.destination_response.update(conditions_json)
+                    else:
+                        self.destination_response.update(conditions_response)
+                        self.destination_response.update({"statuscode": status_code})
+
             # Lab Results Data
                 if event == "labresults" or event == "results" or event == "all":
                     results_json = {"Results": []}
@@ -1501,9 +1724,10 @@ class PatientQueryTransformer(Transformer):
                         self.destination_response.update({"statuscode": status_code})
 
         except Exception as e:
-            print("error", e)
-            return None
-        print("destination_response", self.destination_response)
+            logger.exception("PatientQueryTransformer failed for patient %s", self.patient_id)
+            self.destination_response["Meta"]["Error"] = str(e)
+            return self.destination_response
+
         return self.destination_response
 
 class MedicationNewTransformer(Transformer):
@@ -1716,6 +1940,6 @@ class ClinicalsPushTransformer(Transformer):
             return self.destination_response
 
         except Exception as e:
-            print(f"Error transforming allergies: {e}")
+            logger.exception("Error transforming allergies")
             self.destination_response.update({"error": str(e)})
             return self.destination_response

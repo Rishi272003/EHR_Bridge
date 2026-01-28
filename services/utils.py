@@ -1,3 +1,5 @@
+import logging
+
 from services.ehr.athena.transformers.clinical_summary import PatientQueryTransformer as AthenaPatientQueryTransformer
 from services.ehr.athena.transformers.patient_search import PatientSearchTransformer as AthenaPatientSearchTransformer
 from services.ehr.athena.transformers.visit_query import VisitQueryTransformer
@@ -15,114 +17,241 @@ from services.ehr.eclinicalworks.transformers.organization import OrganizationCr
 from services.ehr.eclinicalworks.transformers.practitioner import PractitionerQueryTransformer as ECWPractitionerQueryTransformer
 from services.ehr.eclinicalworks.transformers.document_reference import DocumentReferenceQueryTransformer as ECWDocumentReferenceQueryTransformer
 
-def get_query_transformer(connection_obj,source_data):
-    response = None
-    ehr_name = connection_obj.ehr_name if hasattr(connection_obj,"ehr_name") else None
-    events = source_data.get("Meta",{}).get("Events",[])
-    match ehr_name:
-        case "athena":
-            patientQ_obj = AthenaPatientQueryTransformer(connection_obj,events,source_data)
-            response = patientQ_obj.transform()
-        case "eclinicalworks":
-            patientQ_obj = ECWPatientQueryTransformer(connection_obj,source_data)
-            response = patientQ_obj.transform(events)
-    return response
+logger = logging.getLogger(__name__)
 
-def get_search_transformer(connection_obj,source_data):
-    response = None
-    ehr_name = connection_obj.ehr_name if hasattr(connection_obj,"ehr_name") else None
+# Supported EHR types for each transformer
+SUPPORTED_QUERY_EHRS = {"athena", "eclinicalworks"}
+SUPPORTED_SEARCH_EHRS = {"athena", "eclinicalworks"}
+SUPPORTED_VISIT_EHRS = {"athena", "eclinicalworks"}
+SUPPORTED_PROVIDERS_EHRS = {"athena", "eclinicalworks"}
+SUPPORTED_PATIENT_ADMIN_EHRS = {"eclinicalworks"}
+SUPPORTED_MEDICATION_EHRS = {"eclinicalworks"}
+SUPPORTED_MEDIA_EHRS = {"eclinicalworks"}
+SUPPORTED_CLINICALS_PUSH_EHRS = {"eclinicalworks"}
+SUPPORTED_ORGANIZATION_EHRS = {"eclinicalworks"}
+SUPPORTED_DOCUMENT_REF_EHRS = {"eclinicalworks"}
+
+
+def _get_ehr_name(connection_obj):
+    """
+    Safely extract EHR name from connection object.
+    Returns None if connection_obj is invalid.
+    """
+    if not connection_obj or not hasattr(connection_obj, "ehr_name"):
+        return None
+    return connection_obj.ehr_name
+
+
+def _unsupported_ehr_response(ehr_name, operation, supported_ehrs):
+    """
+    Generate a standardized error response for unsupported EHR types.
+    """
+    logger.warning(
+        "Unsupported EHR type '%s' for operation '%s'. Supported: %s",
+        ehr_name, operation, supported_ehrs
+    )
+    return {
+        "error": f"EHR type '{ehr_name}' is not supported for {operation}",
+        "supported_ehrs": list(supported_ehrs)
+    }
+
+
+def get_query_transformer(connection_obj, source_data):
+    """
+    Get the appropriate patient query transformer for the EHR type.
+    """
+    ehr_name = _get_ehr_name(connection_obj)
+    if not ehr_name:
+        logger.error("Invalid connection object for query transformer")
+        return {"error": "Invalid connection object"}
+
+    events = source_data.get("Meta", {}).get("Events", [])
+
     match ehr_name:
         case "athena":
-            patientSearch_obj = AthenaPatientSearchTransformer(connection_obj,source_data)
-            response = patientSearch_obj.transform()
+            transformer = AthenaPatientQueryTransformer(connection_obj, events, source_data)
+            return transformer.transform()
         case "eclinicalworks":
-            patientSearch_obj = ECWPatientSearchTransformer(connection_obj,source_data)
-            response = patientSearch_obj.transform()
-    return response
+            transformer = ECWPatientQueryTransformer(connection_obj, source_data)
+            return transformer.transform(events)
+        case _:
+            return _unsupported_ehr_response(ehr_name, "patient query", SUPPORTED_QUERY_EHRS)
+
+
+def get_search_transformer(connection_obj, source_data):
+    """
+    Get the appropriate patient search transformer for the EHR type.
+    """
+    ehr_name = _get_ehr_name(connection_obj)
+    if not ehr_name:
+        logger.error("Invalid connection object for search transformer")
+        return {"error": "Invalid connection object"}
+
+    match ehr_name:
+        case "athena":
+            transformer = AthenaPatientSearchTransformer(connection_obj, source_data)
+            return transformer.transform()
+        case "eclinicalworks":
+            transformer = ECWPatientSearchTransformer(connection_obj, source_data)
+            return transformer.transform()
+        case _:
+            return _unsupported_ehr_response(ehr_name, "patient search", SUPPORTED_SEARCH_EHRS)
+
 
 def get_visit_transformer(connection_obj, source_data):
-    response = None
-    ehr_name = connection_obj.ehr_name if hasattr(connection_obj,"ehr_name") else None
+    """
+    Get the appropriate visit query transformer for the EHR type.
+    """
+    ehr_name = _get_ehr_name(connection_obj)
+    if not ehr_name:
+        logger.error("Invalid connection object for visit transformer")
+        return {"error": "Invalid connection object"}
+
     match ehr_name:
         case "athena":
-            visitQ_obj = VisitQueryTransformer(connection_obj, source_data)
-            response = visitQ_obj.transform()
+            transformer = VisitQueryTransformer(connection_obj, source_data)
+            return transformer.transform()
         case "eclinicalworks":
-            visitQ_obj = ECWVisitQueryTransformer(connection_obj, source_data)
-            response = visitQ_obj.transform()
-    return response
+            transformer = ECWVisitQueryTransformer(connection_obj, source_data)
+            return transformer.transform()
+        case _:
+            return _unsupported_ehr_response(ehr_name, "visit query", SUPPORTED_VISIT_EHRS)
+
 
 def get_providers_transformer(connection_obj, source_data):
-    response = None
-    ehr_name = connection_obj.ehr_name if hasattr(connection_obj, "ehr_name") else None
+    """
+    Get the appropriate providers/practitioners transformer for the EHR type.
+    """
+    ehr_name = _get_ehr_name(connection_obj)
+    if not ehr_name:
+        logger.error("Invalid connection object for providers transformer")
+        return {"error": "Invalid connection object"}
+
     match ehr_name:
         case "athena":
-            providers_obj = ProvidersTransformer(connection_obj, {}, source_data)
-            response = providers_obj.transform()
+            transformer = ProvidersTransformer(connection_obj, {}, source_data)
+            return transformer.transform()
         case "eclinicalworks":
-            providers_obj = ECWPractitionerQueryTransformer(connection_obj, source_data)
-            response = providers_obj.transform()
-    return response
+            transformer = ECWPractitionerQueryTransformer(connection_obj, source_data)
+            return transformer.transform()
+        case _:
+            return _unsupported_ehr_response(ehr_name, "providers query", SUPPORTED_PROVIDERS_EHRS)
 
-def get_patient_admin_transformer(connection_obj,connection_data,source_data):
-    response = None
-    ehr_name = connection_obj.ehr_name if hasattr(connection_obj,"ehr_name") else None
+
+def get_patient_admin_transformer(connection_obj, connection_data, source_data):
+    """
+    Get the appropriate patient admin transformer for the EHR type.
+    """
+    ehr_name = _get_ehr_name(connection_obj)
+    if not ehr_name:
+        logger.error("Invalid connection object for patient admin transformer")
+        return {"error": "Invalid connection object"}
+
     match ehr_name:
         case "eclinicalworks":
-            patientAdmin_obj = ECWNewPatientTransformer(connection_obj,source_data)
-            response = patientAdmin_obj.transform()
-    return response
+            transformer = ECWNewPatientTransformer(connection_obj, source_data)
+            return transformer.transform()
+        case _:
+            return _unsupported_ehr_response(ehr_name, "patient admin", SUPPORTED_PATIENT_ADMIN_EHRS)
 
-def get_medication_transformer(connection_obj,connection_data,source_data):
-    response = None
-    ehr_name = connection_obj.ehr_name if hasattr(connection_obj,"ehr_name") else None
+
+def get_medication_transformer(connection_obj, connection_data, source_data):
+    """
+    Get the appropriate medication transformer for the EHR type.
+    """
+    ehr_name = _get_ehr_name(connection_obj)
+    if not ehr_name:
+        logger.error("Invalid connection object for medication transformer")
+        return {"error": "Invalid connection object"}
+
     match ehr_name:
         case "eclinicalworks":
-            medication_obj = ECWMedicationNewTransformer(connection_obj,source_data)
-            response = medication_obj.transform()
-    return response
+            transformer = ECWMedicationNewTransformer(connection_obj, source_data)
+            return transformer.transform()
+        case _:
+            return _unsupported_ehr_response(ehr_name, "medication", SUPPORTED_MEDICATION_EHRS)
 
-def get_media_transformer(connection_obj,connection_data,source_data):
-    response = None
-    ehr_name = connection_obj.ehr_name if hasattr(connection_obj,"ehr_name") else None
+
+def get_media_transformer(connection_obj, connection_data, source_data):
+    """
+    Get the appropriate media transformer for the EHR type.
+    """
+    ehr_name = _get_ehr_name(connection_obj)
+    if not ehr_name:
+        logger.error("Invalid connection object for media transformer")
+        return {"error": "Invalid connection object"}
+
     match ehr_name:
         case "eclinicalworks":
-            media_obj = ECWMediaNewTransformer(connection_obj,source_data)
-            response = media_obj.transform()
-    return response
+            transformer = ECWMediaNewTransformer(connection_obj, source_data)
+            return transformer.transform()
+        case _:
+            return _unsupported_ehr_response(ehr_name, "media", SUPPORTED_MEDIA_EHRS)
 
-def clinicals_push_transformer(connection_obj,source_data,event):
-    response = None
-    ehr_name = connection_obj.ehr_name if hasattr(connection_obj,"ehr_name") else None
+
+def clinicals_push_transformer(connection_obj, source_data, event):
+    """
+    Get the appropriate clinicals push transformer for the EHR type.
+    """
+    ehr_name = _get_ehr_name(connection_obj)
+    if not ehr_name:
+        logger.error("Invalid connection object for clinicals push transformer")
+        return {"error": "Invalid connection object"}
+
     match ehr_name:
         case "eclinicalworks":
-            clinicals_push_obj = ECWClinicalsPushTransformer(connection_obj,source_data)
-            response = clinicals_push_obj.transform(event)
-    return response
+            transformer = ECWClinicalsPushTransformer(connection_obj, source_data)
+            return transformer.transform(event)
+        case _:
+            return _unsupported_ehr_response(ehr_name, "clinicals push", SUPPORTED_CLINICALS_PUSH_EHRS)
 
-def get_organization_transformer(connection_obj,source_data):
-    response = None
-    ehr_name = connection_obj.ehr_name if hasattr(connection_obj,"ehr_name") else None
+
+def get_organization_transformer(connection_obj, source_data):
+    """
+    Get the appropriate organization query transformer for the EHR type.
+    """
+    ehr_name = _get_ehr_name(connection_obj)
+    if not ehr_name:
+        logger.error("Invalid connection object for organization transformer")
+        return {"error": "Invalid connection object"}
+
     match ehr_name:
         case "eclinicalworks":
-            organization_obj = ECWOrganizationQueryTransformer(connection_obj,source_data)
-            response = organization_obj.transform()
-    return response
+            transformer = ECWOrganizationQueryTransformer(connection_obj, source_data)
+            return transformer.transform()
+        case _:
+            return _unsupported_ehr_response(ehr_name, "organization query", SUPPORTED_ORGANIZATION_EHRS)
 
-def create_organization_transformer(connection_obj,source_data):
-    response = None
-    ehr_name = connection_obj.ehr_name if hasattr(connection_obj,"ehr_name") else None
+
+def create_organization_transformer(connection_obj, source_data):
+    """
+    Get the appropriate organization create transformer for the EHR type.
+    """
+    ehr_name = _get_ehr_name(connection_obj)
+    if not ehr_name:
+        logger.error("Invalid connection object for organization create transformer")
+        return {"error": "Invalid connection object"}
+
     match ehr_name:
         case "eclinicalworks":
-            organization_obj = ECWOrganizationCreateTransformer(connection_obj,source_data)
-            response = organization_obj.transform()
-    return response
+            transformer = ECWOrganizationCreateTransformer(connection_obj, source_data)
+            return transformer.transform()
+        case _:
+            return _unsupported_ehr_response(ehr_name, "organization create", SUPPORTED_ORGANIZATION_EHRS)
+
 
 def get_document_reference_transformer(connection_obj, source_data):
-    response = None
-    ehr_name = connection_obj.ehr_name if hasattr(connection_obj, "ehr_name") else None
+    """
+    Get the appropriate document reference transformer for the EHR type.
+    """
+    ehr_name = _get_ehr_name(connection_obj)
+    if not ehr_name:
+        logger.error("Invalid connection object for document reference transformer")
+        return {"error": "Invalid connection object"}
+
     match ehr_name:
         case "eclinicalworks":
-            doc_ref_obj = ECWDocumentReferenceQueryTransformer(connection_obj, source_data)
-            response = doc_ref_obj.transform()
-    return response
+            transformer = ECWDocumentReferenceQueryTransformer(connection_obj, source_data)
+            return transformer.transform()
+        case _:
+            return _unsupported_ehr_response(ehr_name, "document reference", SUPPORTED_DOCUMENT_REF_EHRS)

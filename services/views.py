@@ -1,8 +1,13 @@
-from urllib import request
+import logging
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from rest_framework import status
+from rest_framework import status, serializers
+from drf_spectacular.utils import extend_schema, OpenApiExample, inline_serializer
+from django.forms.models import model_to_dict
+
+from core.models import EHRConnection
 from .serializers import (
     PatientQuerySerializer,
     PatientSearchSerializer,
@@ -14,78 +19,137 @@ from .serializers import (
     ProviderByIdSerializer,
     CreateProviderSerializer,
 )
-from drf_spectacular.utils import extend_schema
-from core.models import EHRConnection
-from .utils import *
-from django.forms.models import model_to_dict
+from .utils import (
+    get_query_transformer,
+    get_search_transformer,
+    get_visit_transformer,
+    get_providers_transformer,
+    get_patient_admin_transformer,
+    get_medication_transformer,
+    get_media_transformer,
+    clinicals_push_transformer,
+    get_organization_transformer,
+    create_organization_transformer,
+    get_document_reference_transformer,
+)
 from .ehr.athena.categories.Appointment import Appointment
-from drf_spectacular.utils import OpenApiExample, extend_schema, inline_serializer,OpenApiParameter
-import base64
-import urllib
-import requests
-from django.http import JsonResponse
-from django.shortcuts import redirect
-from django.utils import timezone
-from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_http_methods
-from core.models import EHRConnection
-from services.ehr.value_sets import *
-from rest_framework import serializers,status
+from services.ehr.value_sets import (
+    clinical_summary_value_sets,
+    patient_search_value_sets,
+    provider_value_sets,
+    patient_admin_value_sets,
+    patient_clinicals,
+    media,
+    medias_value_sets,
+    organization_query_value_sets,
+)
+
+logger = logging.getLogger(__name__)
 class PatientQueryAPIView(APIView):
     permission_classes = [IsAuthenticated]
+
     @extend_schema(
-    summary="Clinical Summary Patient Query",
-    description="Return List of Patient Clinical Data",
-    request=inline_serializer(
-        name="Clinical-Summary-Patient-Query",
-        fields={
-            "Source_json": serializers.CharField(),
-        },
-    ),
-    examples=[
-        OpenApiExample(
+        summary="Clinical Summary Patient Query",
+        description="Return List of Patient Clinical Data",
+        request=inline_serializer(
             name="Clinical-Summary-Patient-Query",
-            value=clinical_summary_value_sets.get("patient_query"),
-        )
-    ],
+            fields={
+                "Source_json": serializers.CharField(),
+            },
+        ),
+        examples=[
+            OpenApiExample(
+                name="Clinical-Summary-Patient-Query",
+                value=clinical_summary_value_sets.get("patient_query"),
+            )
+        ],
     )
     def post(self, request):
         source_data = request.data
+        connection_id = source_data.get("Meta", {}).get("Source", {}).get("ID")
+
+        if not connection_id:
+            return Response(
+                {"detail": "Connection ID is required in Meta.Source.ID"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         try:
-            connection_id = source_data.get("Meta",{}).get("Source",{}).get("ID")
             connection_obj = EHRConnection.objects.filter(uuid=connection_id).first()
-            transformer_response = get_query_transformer(connection_obj,source_data)
+            if not connection_obj:
+                return Response(
+                    {"detail": "Connection not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            transformer_response = get_query_transformer(connection_obj, source_data)
+            if transformer_response is None:
+                return Response(
+                    {"detail": "Failed to process query"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            return Response({"data": transformer_response}, status=status.HTTP_200_OK)
+
         except Exception as e:
-            return Response({"detail":f"Somthing went wrong {str(e)}"})
-        return Response({"data":transformer_response},status=status.HTTP_200_OK)
+            logger.exception("PatientQuery failed for connection %s", connection_id)
+            return Response(
+                {"detail": "Internal server error"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 class PatientSearch(APIView):
-    permission_class = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]  # Fixed: was permission_class (typo)
+
     @extend_schema(
-    summary="Patient Search Query",
-    description="Return List of Patients",
-    request=inline_serializer(
-        name="Patient-Search-Query",
-        fields={
-            "Source_json": serializers.CharField(),
-        },
-    ),
-    examples=[
-        OpenApiExample(
+        summary="Patient Search Query",
+        description="Return List of Patients",
+        request=inline_serializer(
             name="Patient-Search-Query",
-            value=patient_search_value_sets,
-        )
-    ],
+            fields={
+                "Source_json": serializers.CharField(),
+            },
+        ),
+        examples=[
+            OpenApiExample(
+                name="Patient-Search-Query",
+                value=patient_search_value_sets,
+            )
+        ],
     )
-    def post(self,request):
+    def post(self, request):
         source_data = request.data
+        connection_id = source_data.get("Meta", {}).get("Source", {}).get("ID")
+
+        if not connection_id:
+            return Response(
+                {"detail": "Connection ID is required in Meta.Source.ID"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         try:
-            connection_id = source_data.get("Meta",{}).get("Source",{}).get("ID")
             connection_obj = EHRConnection.objects.filter(uuid=connection_id).first()
-            transformer_response = get_search_transformer(connection_obj,source_data)
+            if not connection_obj:
+                return Response(
+                    {"detail": "Connection not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            transformer_response = get_search_transformer(connection_obj, source_data)
+            if transformer_response is None:
+                return Response(
+                    {"detail": "Failed to process search"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            return Response({"data": transformer_response}, status=status.HTTP_200_OK)
+
         except Exception as e:
-            return Response({"detail":f"Somthing went wrong {str(e)}"})
-        return Response({"data":transformer_response},status=status.HTTP_200_OK)
+            logger.exception("PatientSearch failed for connection %s", connection_id)
+            return Response(
+                {"detail": "Internal server error"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class AppointmentByDateAPIView(APIView):
@@ -296,36 +360,54 @@ class AppointmentRescheduleAPIView(APIView):
 class VisitQueryAPIView(APIView):
     permission_classes = [IsAuthenticated]
     serializer_class = VisitQuerySerializer
+
     @extend_schema(
-    summary="Clinical Summary Visit Query",
-    description="Return List of Visits for a Patient",
-    request=inline_serializer(
-        name="Clinical-Summary-Visit-Query",
-        fields={
-            "Source_json": serializers.CharField(),
-        },
-    ),
-    examples=[
-        OpenApiExample(
+        summary="Clinical Summary Visit Query",
+        description="Return List of Visits for a Patient",
+        request=inline_serializer(
             name="Clinical-Summary-Visit-Query",
-            value=clinical_summary_value_sets.get("visit_query"),
-        )
-    ],
-)
+            fields={
+                "Source_json": serializers.CharField(),
+            },
+        ),
+        examples=[
+            OpenApiExample(
+                name="Clinical-Summary-Visit-Query",
+                value=clinical_summary_value_sets.get("visit_query"),
+            )
+        ],
+    )
     def post(self, request):
         source_data = request.data
-        try:
-            connection_id = source_data.get("Meta",{}).get("Source",{}).get("ID")
-            connection_obj = EHRConnection.objects.filter(uuid=connection_id).first()
-            transformer_response = get_visit_transformer(connection_obj,source_data)
+        connection_id = source_data.get("Meta", {}).get("Source", {}).get("ID")
 
+        if not connection_id:
             return Response(
-                transformer_response,
-                status=status.HTTP_200_OK,
+                {"detail": "Connection ID is required in Meta.Source.ID"},
+                status=status.HTTP_400_BAD_REQUEST
             )
+
+        try:
+            connection_obj = EHRConnection.objects.filter(uuid=connection_id).first()
+            if not connection_obj:
+                return Response(
+                    {"detail": "Connection not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            transformer_response = get_visit_transformer(connection_obj, source_data)
+            if transformer_response is None:
+                return Response(
+                    {"detail": "Failed to process visit query"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            return Response(transformer_response, status=status.HTTP_200_OK)
+
         except Exception as e:
+            logger.exception("VisitQuery failed for connection %s", connection_id)
             return Response(
-                {"detail": f"Something went wrong: {str(e)}"},
+                {"detail": "Internal server error"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

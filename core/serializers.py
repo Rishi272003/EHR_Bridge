@@ -19,6 +19,7 @@ class EHRConnectionSerializer(serializers.ModelSerializer):
             "client_secret",
             "scope",
             "connection_status",
+            "customer_auth_url",
         ]
 
 
