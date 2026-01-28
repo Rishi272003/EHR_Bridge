@@ -58,7 +58,6 @@ class PatientQueryTransformer(Transformer):
                         demographics_response,
                         status_code,
                     ) = patients_chart.get_patient_demographics(self.patient_id)
-                    print("demographics_response", demographics_response, status_code)
 
                     # Add raw response if Test mode is enabled
                     if self.source_json.get("Meta", {}).get("Test"):
@@ -150,8 +149,6 @@ class PatientQueryTransformer(Transformer):
                                             demographics_json["Header"]["Patient"]["Demographics"]["Ethnicity"] = eth_ext.get("valueString")
 
                         self.destination_response.update(demographics_json)
-                        print("destination_response", self.destination_response)
-                        print("status_code", status_code)
                     else:
                         self.destination_response.update(demographics_response)
                         self.destination_response.update({"statuscode": status_code})
@@ -162,7 +159,6 @@ class PatientQueryTransformer(Transformer):
                         allergies_response,
                         status_code,
                     ) = patients_chart.get_patient_allergy(self.patient_id)
-                    print("allergies_response", allergies_response, status_code)
                     # Add raw response if Test mode is enabled
                     if self.source_json.get("Meta", {}).get("Test"):
                         self.destination_response["Meta"]["Raw"].append(
@@ -448,7 +444,6 @@ class PatientQueryTransformer(Transformer):
                     medications_response, status_code = (
                         patients_chart.get_patient_medication(self.patient_id)
                     )
-                    print("medications_response", medications_response, status_code)
                     # Add raw response if Test mode is enabled
                     if self.source_json.get("Meta", {}).get("Test"):
                         self.destination_response["Meta"]["Raw"].append(
@@ -640,7 +635,6 @@ class PatientQueryTransformer(Transformer):
                                     )
 
                                 self.destination_response.update(medications_json)
-                                print("medications_json updated", medications_json)
                         else:
                             # Legacy format - try to access medications key
                             if (
@@ -769,11 +763,11 @@ class PatientQueryTransformer(Transformer):
                     if self.source_json.get("StartDate") and self.source_json.get(
                         "EndDate"
                     ):
-                        self.destination_json["startdate"] = datetime.strptime(
+                        self.destination_response["startdate"] = datetime.strptime(
                             self.source_json.get("StartDate"),
                             "%Y-%m-%d",
                         ).strftime("%m/%d/%Y")
-                        self.destination_json["enddate"] = datetime.strptime(
+                        self.destination_response["enddate"] = datetime.strptime(
                             self.source_json.get("EndDate"),
                             "%Y-%m-%d",
                         ).strftime("%m/%d/%Y")
@@ -1292,15 +1286,10 @@ class PatientQueryTransformer(Transformer):
             # Lab Results Data
                 if event == "labresults" or event == "results" or event == "all":
                     results_json = {"Results": []}
-
-                    diagnostic_report = DiagnosticReport(
-                        self.connection
-                    )
-                    diagnostic_report.authenticate()
                     # Search for lab results by patient and category
                     lab_results_response, status_code = (
-                        diagnostic_report.search_by_patient(
-                            self.patient_id, category="LAB"
+                        patients_chart.get_patient_lab_result(
+                            self.patient_id
                         )
                     )
                     if self.source_json["Meta"].get("Test"):
@@ -1321,391 +1310,237 @@ class PatientQueryTransformer(Transformer):
                                 # Return empty Results array
                                 self.destination_response.update(results_json)
                             else:
-                                # Process each DiagnosticReport resource from Bundle
+                                # Group observations by encounter and date for better organization
+                                observations_by_encounter = {}
+
+                                # First pass: collect all Observation resources
                                 for entry_item in entries:
-                                    diagnostic_report_resource = entry_item.get(
-                                        "resource", {}
-                                    )
-                                    if (
-                                        not diagnostic_report_resource
-                                        or diagnostic_report_resource.get(
-                                            "resourceType"
-                                        )
-                                        != "DiagnosticReport"
-                                    ):
-                                        continue
+                                    resource = entry_item.get("resource", {})
+                                    resource_type = resource.get("resourceType")
 
-                                    # Extract DiagnosticReport ID
-                                    report_id = diagnostic_report_resource.get("id", "")
+                                    # Process Observation resources directly
+                                    if resource_type == "Observation":
+                                        # Check if it's a laboratory observation
+                                        categories = resource.get("category", [])
+                                        is_lab = False
+                                        for cat in categories:
+                                            if isinstance(cat, dict):
+                                                codings = cat.get("coding", [])
+                                                for coding in codings:
+                                                    if coding.get("code") == "laboratory":
+                                                        is_lab = True
+                                                        break
+                                            if is_lab:
+                                                break
 
-                                    # Extract status
-                                    report_status = diagnostic_report_resource.get(
-                                        "status", ""
-                                    )
+                                        if not is_lab:
+                                            continue
 
-                                    # Extract code (test/panel name)
-                                    code = diagnostic_report_resource.get("code", {})
-                                    code_codings = code.get("coding", [])
-                                    code_value = None
-                                    code_system = None
-                                    code_name = code.get("text") or None
+                                        # Extract encounter ID for grouping
+                                        encounter_ref = resource.get("encounter", {})
+                                        encounter_id = None
+                                        if isinstance(encounter_ref, dict) and encounter_ref.get("reference"):
+                                            encounter_ref_str = encounter_ref.get("reference", "")
+                                            encounter_id = encounter_ref_str.split("/")[-1] if "/" in encounter_ref_str else encounter_ref_str
 
-                                    if code_codings:
-                                        first_coding = code_codings[0]
-                                        code_value = first_coding.get("code")
-                                        code_system = first_coding.get("system")
-                                        if not code_name:
-                                            code_name = first_coding.get("display")
+                                        # Use encounter ID and effective date as key for grouping
+                                        effective_date = resource.get("effectiveDateTime", "")
+                                        key = f"{encounter_id}_{effective_date}" if encounter_id else f"no-encounter_{effective_date}"
 
-                                    # Extract effective date/time
-                                    effective_datetime = diagnostic_report_resource.get(
-                                        "effectiveDateTime"
-                                    )
-
-                                    # Extract encounter reference
-                                    encounter_ref = diagnostic_report_resource.get(
-                                        "encounter", {}
-                                    )
-                                    encounter_id = None
-                                    if isinstance(
-                                        encounter_ref, dict
-                                    ) and encounter_ref.get("reference"):
-                                        encounter_ref_str = encounter_ref.get(
-                                            "reference", ""
-                                        )
-                                        encounter_id = (
-                                            encounter_ref_str.split("/")[-1]
-                                            if "/" in encounter_ref_str
-                                            else encounter_ref_str
-                                        )
-
-                                    # Extract performer (lab/producer)
-                                    performers = diagnostic_report_resource.get(
-                                        "performer", []
-                                    )
-                                    producer = None
-                                    if performers:
-                                        first_performer = performers[0]
-                                        if isinstance(
-                                            first_performer, dict
-                                        ) and first_performer.get("reference"):
-                                            performer_ref = first_performer.get(
-                                                "reference", ""
-                                            )
-                                            producer_id = (
-                                                performer_ref.split("/")[-1]
-                                                if "/" in performer_ref
-                                                else performer_ref
-                                            )
-                                            producer_display = first_performer.get(
-                                                "display"
-                                            )
-                                            producer = {
-                                                "ID": producer_id,
-                                                "IDType": "OrganizationID",
-                                                "Name": producer_display,
+                                        if key not in observations_by_encounter:
+                                            observations_by_encounter[key] = {
+                                                "encounter_id": encounter_id,
+                                                "effective_date": effective_date,
+                                                "observations": []
                                             }
 
-                                    # Extract specimen
-                                    specimens = diagnostic_report_resource.get(
-                                        "specimen", []
-                                    )
-                                    specimen = None
-                                    if specimens:
-                                        first_specimen = specimens[0]
-                                        if isinstance(
-                                            first_specimen, dict
-                                        ) and first_specimen.get("reference"):
-                                            specimen_ref = first_specimen.get(
-                                                "reference", ""
-                                            )
-                                            specimen_id = (
-                                                specimen_ref.split("/")[-1]
-                                                if "/" in specimen_ref
-                                                else specimen_ref
-                                            )
-                                            specimen = {
-                                                "ID": specimen_id,
-                                                "Source": None,  # Could be extracted from Specimen resource if needed
-                                            }
+                                        observations_by_encounter[key]["observations"].append(resource)
 
-                                    # Extract results (Observation references)
-                                    result_observations = []
-                                    results = diagnostic_report_resource.get(
-                                        "result", []
-                                    )
-                                    for result_ref in results:
-                                        if isinstance(
-                                            result_ref, dict
-                                        ) and result_ref.get("reference"):
-                                            observation_ref = result_ref.get(
-                                                "reference", ""
-                                            )
-                                            observation_id = (
-                                                observation_ref.split("/")[-1]
-                                                if "/" in observation_ref
-                                                else observation_ref
-                                            )
+                                    # Also handle DiagnosticReport resources if present (backward compatibility)
+                                    elif resource_type == "DiagnosticReport":
+                                        # Process DiagnosticReport as before
+                                        diagnostic_report_resource = resource
 
-                                            # Try to find the Observation resource in the Bundle
-                                            observation_resource = None
-                                            for obs_entry in entries:
-                                                obs_res = obs_entry.get("resource", {})
-                                                if (
-                                                    obs_res.get("resourceType")
-                                                    == "Observation"
-                                                    and obs_res.get("id")
-                                                    == observation_id
-                                                ):
-                                                    observation_resource = obs_res
-                                                    break
+                                        # Extract DiagnosticReport ID
+                                        report_id = diagnostic_report_resource.get("id", "")
 
-                                            if observation_resource:
-                                                # Extract observation code
-                                                obs_code = observation_resource.get(
-                                                    "code", {}
-                                                )
-                                                obs_code_codings = obs_code.get(
-                                                    "coding", []
-                                                )
-                                                obs_code_value = None
-                                                obs_code_system = None
-                                                obs_code_name = (
-                                                    obs_code.get("text") or None
-                                                )
+                                        # Extract status
+                                        report_status = diagnostic_report_resource.get("status", "")
 
-                                                if obs_code_codings:
-                                                    first_obs_coding = obs_code_codings[
-                                                        0
-                                                    ]
-                                                    obs_code_value = (
-                                                        first_obs_coding.get("code")
-                                                    )
-                                                    obs_code_system = (
-                                                        first_obs_coding.get("system")
-                                                    )
-                                                    if not obs_code_name:
-                                                        obs_code_name = (
-                                                            first_obs_coding.get(
-                                                                "display"
-                                                            )
-                                                        )
+                                        # Extract code (test/panel name)
+                                        code = diagnostic_report_resource.get("code", {})
+                                        code_codings = code.get("coding", [])
+                                        code_value = None
+                                        code_system = None
+                                        code_name = code.get("text") or None
 
-                                                # Extract observation value
-                                                obs_value = None
-                                                obs_value_type = None
-                                                obs_units = None
+                                        if code_codings:
+                                            first_coding = code_codings[0]
+                                            code_value = first_coding.get("code")
+                                            code_system = first_coding.get("system")
+                                            if not code_name:
+                                                code_name = first_coding.get("display")
 
-                                                if observation_resource.get(
-                                                    "valueQuantity"
-                                                ):
-                                                    value_quantity = (
-                                                        observation_resource.get(
-                                                            "valueQuantity"
-                                                        )
-                                                    )
-                                                    obs_value = str(
-                                                        value_quantity.get("value", "")
-                                                    )
-                                                    obs_units = value_quantity.get(
-                                                        "unit"
-                                                    )
-                                                    obs_value_type = "Quantity"
-                                                elif observation_resource.get(
-                                                    "valueString"
-                                                ):
-                                                    obs_value = (
-                                                        observation_resource.get(
-                                                            "valueString"
-                                                        )
-                                                    )
-                                                    obs_value_type = "String"
-                                                elif observation_resource.get(
-                                                    "valueCodeableConcept"
-                                                ):
-                                                    value_codeable = (
-                                                        observation_resource.get(
-                                                            "valueCodeableConcept"
-                                                        )
-                                                    )
-                                                    value_codings = value_codeable.get(
-                                                        "coding", []
-                                                    )
-                                                    if value_codings:
-                                                        obs_value = value_codings[
-                                                            0
-                                                        ].get(
-                                                            "display"
-                                                        ) or value_codings[
-                                                            0
-                                                        ].get(
-                                                            "code"
-                                                        )
-                                                    else:
-                                                        obs_value = value_codeable.get(
-                                                            "text"
-                                                        )
-                                                    obs_value_type = "CodeableConcept"
-                                                elif observation_resource.get(
-                                                    "valueBoolean"
-                                                ):
-                                                    obs_value = str(
-                                                        observation_resource.get(
-                                                            "valueBoolean"
-                                                        )
-                                                    )
-                                                    obs_value_type = "Boolean"
+                                        # Extract effective date/time
+                                        effective_datetime = diagnostic_report_resource.get("effectiveDateTime")
 
-                                                # Extract interpretation
-                                                interpretation = None
-                                                interpretations = (
-                                                    observation_resource.get(
-                                                        "interpretation", []
-                                                    )
-                                                )
-                                                if interpretations:
-                                                    first_interp = interpretations[0]
-                                                    if isinstance(first_interp, dict):
-                                                        interp_codings = (
-                                                            first_interp.get(
-                                                                "coding", []
-                                                            )
-                                                        )
-                                                        if interp_codings:
-                                                            interpretation = (
-                                                                interp_codings[0].get(
-                                                                    "display"
-                                                                )
-                                                                or interp_codings[
-                                                                    0
-                                                                ].get("code")
-                                                            )
-                                                        else:
-                                                            interpretation = (
-                                                                first_interp.get("text")
-                                                            )
-                                                    elif isinstance(first_interp, str):
-                                                        interpretation = first_interp
+                                        # Extract encounter reference
+                                        encounter_ref = diagnostic_report_resource.get("encounter", {})
+                                        encounter_id = None
+                                        if isinstance(encounter_ref, dict) and encounter_ref.get("reference"):
+                                            encounter_ref_str = encounter_ref.get("reference", "")
+                                            encounter_id = encounter_ref_str.split("/")[-1] if "/" in encounter_ref_str else encounter_ref_str
 
-                                                # Extract reference range
-                                                reference_range = None
-                                                ref_ranges = observation_resource.get(
-                                                    "referenceRange", []
-                                                )
-                                                if ref_ranges:
-                                                    first_range = ref_ranges[0]
-                                                    low = None
-                                                    high = None
-                                                    text = None
-
-                                                    if isinstance(first_range, dict):
-                                                        low_quantity = first_range.get(
-                                                            "low", {}
-                                                        )
-                                                        if low_quantity:
-                                                            low = str(
-                                                                low_quantity.get(
-                                                                    "value", ""
-                                                                )
-                                                            )
-
-                                                        high_quantity = first_range.get(
-                                                            "high", {}
-                                                        )
-                                                        if high_quantity:
-                                                            high = str(
-                                                                high_quantity.get(
-                                                                    "value", ""
-                                                                )
-                                                            )
-
-                                                        text = first_range.get("text")
-
-                                                    if low or high or text:
-                                                        reference_range = {
-                                                            "Low": low,
-                                                            "High": high,
-                                                            "Text": text,
-                                                        }
-
-                                                # Extract comments
-                                                comments = []
-                                                obs_notes = observation_resource.get(
-                                                    "note", []
-                                                )
-                                                for note in obs_notes:
-                                                    if isinstance(note, dict):
-                                                        note_text = note.get("text")
-                                                        if note_text:
-                                                            comments.append(
-                                                                {"Text": note_text}
-                                                            )
-
-                                                # Extract observation status
-                                                obs_status = observation_resource.get(
-                                                    "status", ""
-                                                )
-
-                                                # Extract effective date/time
-                                                obs_datetime = observation_resource.get(
-                                                    "effectiveDateTime"
-                                                )
-
-                                                result_observations.append(
-                                                    {
-                                                        "Code": obs_code_value,
-                                                        "CodeSystem": obs_code_system,
-                                                        "CodeSystemName": None,
-                                                        "Name": obs_code_name,
-                                                        "DateTime": obs_datetime,
-                                                        "Status": obs_status,
-                                                        "Value": obs_value,
-                                                        "ValueType": obs_value_type,
-                                                        "Units": obs_units,
-                                                        "Interpretation": interpretation,
-                                                        "ReferenceRange": reference_range,
-                                                        "Comments": (
-                                                            comments
-                                                            if comments
-                                                            else None
-                                                        ),
-                                                    }
-                                                )
-
-                                    # Build Result entry
-                                    result_entry = {
-                                        "Code": code_value,
-                                        "CodeSystem": code_system,
-                                        "CodeSystemName": None,
-                                        "Name": code_name,
-                                        "Status": report_status,
-                                        "Observations": (
-                                            result_observations
-                                            if result_observations
-                                            else []
-                                        ),
-                                    }
-
-                                    # Add encounter if available
-                                    if encounter_id:
-                                        result_entry["Encounter"] = {
-                                            "Identifiers": [
-                                                {
-                                                    "ID": encounter_id,
-                                                    "IDType": "EncounterID",
+                                        # Extract performer (lab/producer)
+                                        performers = diagnostic_report_resource.get("performer", [])
+                                        producer = None
+                                        if performers:
+                                            first_performer = performers[0]
+                                            if isinstance(first_performer, dict) and first_performer.get("reference"):
+                                                performer_ref = first_performer.get("reference", "")
+                                                producer_id = performer_ref.split("/")[-1] if "/" in performer_ref else performer_ref
+                                                producer_display = first_performer.get("display")
+                                                producer = {
+                                                    "ID": producer_id,
+                                                    "IDType": "OrganizationID",
+                                                    "Name": producer_display,
                                                 }
-                                            ],
+
+                                        # Extract specimen
+                                        specimens = diagnostic_report_resource.get("specimen", [])
+                                        specimen = None
+                                        if specimens:
+                                            first_specimen = specimens[0]
+                                            if isinstance(first_specimen, dict) and first_specimen.get("reference"):
+                                                specimen_ref = first_specimen.get("reference", "")
+                                                specimen_id = specimen_ref.split("/")[-1] if "/" in specimen_ref else specimen_ref
+                                                specimen = {
+                                                    "ID": specimen_id,
+                                                    "Source": None,
+                                                }
+
+                                        # Extract results (Observation references)
+                                        result_observations = []
+                                        results = diagnostic_report_resource.get("result", [])
+                                        for result_ref in results:
+                                            if isinstance(result_ref, dict) and result_ref.get("reference"):
+                                                observation_ref = result_ref.get("reference", "")
+                                                observation_id = observation_ref.split("/")[-1] if "/" in observation_ref else observation_ref
+
+                                                # Try to find the Observation resource in the Bundle
+                                                observation_resource = None
+                                                for obs_entry in entries:
+                                                    obs_res = obs_entry.get("resource", {})
+                                                    if obs_res.get("resourceType") == "Observation" and obs_res.get("id") == observation_id:
+                                                        observation_resource = obs_res
+                                                        break
+
+                                                if observation_resource:
+                                                    obs_mapped = self._map_observation_to_result(observation_resource)
+                                                    if obs_mapped:
+                                                        result_observations.append(obs_mapped)
+
+                                        # Build Result entry for DiagnosticReport
+                                        result_entry = {
+                                            "Code": code_value,
+                                            "CodeSystem": code_system,
+                                            "CodeSystemName": None,
+                                            "Name": code_name,
+                                            "Status": report_status,
+                                            "Observations": result_observations if result_observations else [],
                                         }
 
-                                    # Add producer if available
-                                    if producer:
-                                        result_entry["Producer"] = producer
+                                        if encounter_id:
+                                            result_entry["Encounter"] = {
+                                                "Identifiers": [{"ID": encounter_id, "IDType": "EncounterID"}],
+                                            }
 
-                                    # Add specimen if available
-                                    if specimen:
-                                        result_entry["Specimen"] = specimen
+                                        if producer:
+                                            result_entry["Producer"] = producer
 
-                                    results_json["Results"].append(result_entry)
+                                        if specimen:
+                                            result_entry["Specimen"] = specimen
+
+                                        results_json["Results"].append(result_entry)
+
+                                # Process grouped Observation resources
+                                for key, group_data in observations_by_encounter.items():
+                                    encounter_id = group_data["encounter_id"]
+                                    effective_date = group_data["effective_date"]
+                                    observations = group_data["observations"]
+
+                                    # Group observations by effective date for result grouping
+                                    observations_by_date = {}
+                                    for obs in observations:
+                                        obs_date = obs.get("effectiveDateTime", "")
+                                        if obs_date not in observations_by_date:
+                                            observations_by_date[obs_date] = []
+                                        observations_by_date[obs_date].append(obs)
+
+                                    # Create result entries for each date group
+                                    for obs_date, obs_list in observations_by_date.items():
+                                        # Extract common information from first observation
+                                        first_obs = obs_list[0]
+
+                                        # Extract performer (lab/producer) from first observation
+                                        performers = first_obs.get("performer", [])
+                                        producer = None
+                                        if performers:
+                                            first_performer = performers[0]
+                                            if isinstance(first_performer, dict) and first_performer.get("reference"):
+                                                performer_ref = first_performer.get("reference", "")
+                                                producer_id = performer_ref.split("/")[-1] if "/" in performer_ref else performer_ref
+                                                producer_display = first_performer.get("display")
+                                                producer = {
+                                                    "ID": producer_id,
+                                                    "IDType": "OrganizationID",
+                                                    "Name": producer_display,
+                                                }
+
+                                        # Map all observations in this group
+                                        result_observations = []
+                                        for obs_resource in obs_list:
+                                            obs_mapped = self._map_observation_to_result(obs_resource)
+                                            if obs_mapped:
+                                                result_observations.append(obs_mapped)
+
+                                        # Build Result entry - use first observation's code as panel name, or create a generic one
+                                        if result_observations:
+                                            # Use the most common code or first observation's code
+                                            first_obs_code = first_obs.get("code", {})
+                                            code_codings = first_obs_code.get("coding", [])
+                                            code_value = None
+                                            code_system = None
+                                            code_name = first_obs_code.get("text") or "Laboratory Panel"
+
+                                            if code_codings:
+                                                first_coding = code_codings[0]
+                                                code_value = first_coding.get("code")
+                                                code_system = first_coding.get("system")
+                                                if not code_name or code_name == "Laboratory Panel":
+                                                    code_name = first_coding.get("display") or "Laboratory Panel"
+
+                                            # Extract status from first observation
+                                            report_status = first_obs.get("status", "")
+
+                                            result_entry = {
+                                                "Code": code_value,
+                                                "CodeSystem": code_system,
+                                                "CodeSystemName": None,
+                                                "Name": code_name if len(obs_list) == 1 else f"Laboratory Panel - {obs_date}",
+                                                "Status": report_status,
+                                                "Observations": result_observations,
+                                            }
+
+                                            if encounter_id:
+                                                result_entry["Encounter"] = {
+                                                    "Identifiers": [{"ID": encounter_id, "IDType": "EncounterID"}],
+                                                }
+
+                                            if producer:
+                                                result_entry["Producer"] = producer
+
+                                            results_json["Results"].append(result_entry)
 
                                 self.destination_response.update(results_json)
                         else:
@@ -1729,6 +1564,133 @@ class PatientQueryTransformer(Transformer):
             return self.destination_response
 
         return self.destination_response
+
+    def _map_observation_to_result(self, observation_resource):
+        """
+        Helper method to map a FHIR Observation resource to the result format.
+        """
+        if not observation_resource or observation_resource.get("resourceType") != "Observation":
+            return None
+
+        # Extract observation code
+        obs_code = observation_resource.get("code", {})
+        obs_code_codings = obs_code.get("coding", [])
+        obs_code_value = None
+        obs_code_system = None
+        obs_code_name = obs_code.get("text") or None
+
+        if obs_code_codings:
+            first_obs_coding = obs_code_codings[0]
+            obs_code_value = first_obs_coding.get("code")
+            obs_code_system = first_obs_coding.get("system")
+            if not obs_code_name:
+                obs_code_name = first_obs_coding.get("display")
+
+        # Extract observation value
+        obs_value = None
+        obs_value_type = None
+        obs_units = None
+
+        if observation_resource.get("valueQuantity"):
+            value_quantity = observation_resource.get("valueQuantity")
+            obs_value = str(value_quantity.get("value", ""))
+            obs_units = value_quantity.get("unit")
+            obs_value_type = "Quantity"
+        elif observation_resource.get("valueString"):
+            obs_value = observation_resource.get("valueString")
+            obs_value_type = "String"
+        elif observation_resource.get("valueCodeableConcept"):
+            value_codeable = observation_resource.get("valueCodeableConcept")
+            value_codings = value_codeable.get("coding", [])
+            if value_codings:
+                obs_value = value_codings[0].get("display") or value_codings[0].get("code")
+            else:
+                obs_value = value_codeable.get("text")
+            obs_value_type = "CodeableConcept"
+        elif observation_resource.get("valueBoolean"):
+            obs_value = str(observation_resource.get("valueBoolean"))
+            obs_value_type = "Boolean"
+        elif observation_resource.get("valueInteger"):
+            obs_value = str(observation_resource.get("valueInteger"))
+            obs_value_type = "Integer"
+        elif observation_resource.get("valueDecimal"):
+            obs_value = str(observation_resource.get("valueDecimal"))
+            obs_value_type = "Decimal"
+
+        # Extract interpretation
+        interpretation = None
+        interpretations = observation_resource.get("interpretation", [])
+        if interpretations:
+            first_interp = interpretations[0]
+            if isinstance(first_interp, dict):
+                interp_codings = first_interp.get("coding", [])
+                if interp_codings:
+                    interpretation = interp_codings[0].get("display") or interp_codings[0].get("code")
+                else:
+                    interpretation = first_interp.get("text")
+            elif isinstance(first_interp, str):
+                interpretation = first_interp
+
+        # Extract reference range
+        reference_range = None
+        ref_ranges = observation_resource.get("referenceRange", [])
+        if ref_ranges:
+            first_range = ref_ranges[0]
+            low = None
+            high = None
+            text = None
+
+            if isinstance(first_range, dict):
+                low_quantity = first_range.get("low", {})
+                if low_quantity:
+                    low = str(low_quantity.get("value", ""))
+
+                high_quantity = first_range.get("high", {})
+                if high_quantity:
+                    high = str(high_quantity.get("value", ""))
+
+                text = first_range.get("text")
+
+            if low or high or text:
+                reference_range = {
+                    "Low": low,
+                    "High": high,
+                    "Text": text,
+                }
+
+        # Extract comments
+        comments = []
+        obs_notes = observation_resource.get("note", [])
+        for note in obs_notes:
+            if isinstance(note, dict):
+                note_text = note.get("text")
+                if note_text:
+                    comments.append({"Text": note_text})
+
+        # Extract observation status
+        obs_status = observation_resource.get("status", "")
+
+        # Extract effective date/time
+        obs_datetime = observation_resource.get("effectiveDateTime")
+
+        # Extract issued date
+        issued_date = observation_resource.get("issued")
+
+        return {
+            "Code": obs_code_value,
+            "CodeSystem": obs_code_system,
+            "CodeSystemName": None,
+            "Name": obs_code_name,
+            "DateTime": obs_datetime,
+            "Status": obs_status,
+            "Value": obs_value,
+            "ValueType": obs_value_type,
+            "Units": obs_units,
+            "Interpretation": interpretation,
+            "ReferenceRange": reference_range,
+            "Comments": comments if comments else None,
+            "Issued": issued_date,
+        }
 
 class MedicationNewTransformer(Transformer):
 
@@ -1861,7 +1823,6 @@ class ClinicalsPushTransformer(Transformer):
                 criticality_data = allergy.get("Criticality", {})
                 if criticality_data.get("Name"):
                     criticality_name = criticality_data.get("Name", "").lower()
-                    print("criticality_name", criticality_name)
                     if "hight" in criticality_name or "severe" in criticality_name:
                         criticality = "high"
                     elif "low" in criticality_name or "mild" in criticality_name:

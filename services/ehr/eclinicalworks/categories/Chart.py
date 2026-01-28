@@ -130,15 +130,14 @@ class Chart(ECWClient):
             },
         )
 
-    def get_patient_lab_result(self, practiceid=None, **kwargs):
-        # Path doesn't include {practiceid}, it's already in base_url
+    def get_patient_lab_result(self, patientid):
         url = self.build_url(
             ECW_URLS["Chart"]["get_patient_lab_result"]["path"],
         )
         return self.get(
             url,
             params={
-                "patient": kwargs.get("patientid"),
+                "patient": patientid,
                 "category": "laboratory",
             },
         )
