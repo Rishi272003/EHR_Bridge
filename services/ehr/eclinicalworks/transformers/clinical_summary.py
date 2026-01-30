@@ -1558,6 +1558,55 @@ class PatientQueryTransformer(Transformer):
                         self.destination_response.update(lab_results_response)
                         self.destination_response.update({"statuscode": status_code})
 
+            # Coverage Data
+                if event == "coverage" or event == "insurance" or event == "all":
+                    coverage_json = {"Insurances": []}
+                    (
+                        coverage_response,
+                        status_code,
+                    ) = patients_chart.get_patient_insurance(patientid=self.patient_id)
+
+                    # Add raw response if Test mode is enabled
+                    if self.source_json.get("Meta", {}).get("Test"):
+                        self.destination_response["Meta"]["Raw"].append(
+                            coverage_response
+                        )
+
+                    if status_code == 200:
+                        # Check if response is a FHIR Bundle
+                        if (
+                            isinstance(coverage_response, dict)
+                            and coverage_response.get("resourceType") == "Bundle"
+                        ):
+                            entries = coverage_response.get("entry", [])
+                            # Handle empty Bundle (total: 0)
+                            if coverage_response.get("total", 0) == 0 or not entries:
+                                # Return empty Insurances array
+                                self.destination_response.update(coverage_json)
+                            else:
+                                # Process each Coverage resource from Bundle
+                                for entry in entries:
+                                    resource = entry.get("resource", {})
+                                    if resource.get("resourceType") == "Coverage":
+                                        insurance_obj = self._transform_coverage_resource(resource)
+                                        coverage_json["Insurances"].append(insurance_obj)
+
+                                self.destination_response.update(coverage_json)
+                        # Handle single Coverage resource
+                        elif (
+                            isinstance(coverage_response, dict)
+                            and coverage_response.get("resourceType") == "Coverage"
+                        ):
+                            insurance_obj = self._transform_coverage_resource(coverage_response)
+                            coverage_json["Insurances"].append(insurance_obj)
+                            self.destination_response.update(coverage_json)
+                        else:
+                            # Legacy format or error
+                            self.destination_response.update(coverage_json)
+                    else:
+                        self.destination_response.update(coverage_response)
+                        self.destination_response.update({"statuscode": status_code})
+
         except Exception as e:
             logger.exception("PatientQueryTransformer failed for patient %s", self.patient_id)
             self.destination_response["Meta"]["Error"] = str(e)
@@ -1691,6 +1740,163 @@ class PatientQueryTransformer(Transformer):
             "Comments": comments if comments else None,
             "Issued": issued_date,
         }
+
+    def _transform_coverage_resource(self, resource):
+        """
+        Transform a FHIR Coverage resource to standardized insurance format.
+        """
+        insurance_obj = {
+            "Plan": {
+                "ID": resource.get("id"),
+                "IDType": None,
+                "Name": None,
+                "Type": None,
+            },
+            "MemberNumber": resource.get("subscriberId"),
+            "Company": None,
+            "GroupNumber": None,
+            "GroupName": None,
+            "EffectiveDate": None,
+            "ExpirationDate": None,
+            "PolicyNumber": None,
+            "Priority": None,
+            "AgreementType": None,
+            "CoverageType": None,
+            "Insured": {
+                "Identifiers": [],
+                "LastName": None,
+                "MiddleName": None,
+                "FirstName": None,
+                "SSN": None,
+                "Relationship": None,
+                "DOB": None,
+                "Sex": None,
+                "Address": {
+                    "StreetAddress": None,
+                    "City": None,
+                    "State": None,
+                    "ZIP": None,
+                    "County": None,
+                    "Country": None,
+                },
+            },
+        }
+
+        # Transform type (Coverage type)
+        type_data = resource.get("type")
+        if type_data:
+            type_text = type_data.get("text")
+            type_coding = type_data.get("coding", [])
+            if type_coding:
+                type_code = type_coding[0]
+                insurance_obj["CoverageType"] = {
+                    "Code": type_code.get("code"),
+                    "CodeSystem": type_code.get("system"),
+                    "CodeSystemName": None,
+                    "Name": type_code.get("display") or type_text,
+                }
+            elif type_text:
+                insurance_obj["CoverageType"] = {
+                    "Code": None,
+                    "CodeSystem": None,
+                    "CodeSystemName": None,
+                    "Name": type_text,
+                }
+
+        # Transform status
+        status = resource.get("status")
+        if status:
+            insurance_obj["Status"] = status
+
+        # Transform subscriber (RelatedPerson reference)
+        subscriber = resource.get("subscriber")
+        if subscriber:
+            subscriber_ref = subscriber.get("reference", "")
+            if subscriber_ref:
+                insurance_obj["Insured"]["Identifiers"].append({
+                    "ID": subscriber_ref.replace("RelatedPerson/", ""),
+                    "IDType": "RelatedPersonID",
+                })
+
+        # Transform subscriber ID
+        subscriber_id = resource.get("subscriberId")
+        if subscriber_id:
+            insurance_obj["MemberNumber"] = subscriber_id
+
+        # Transform beneficiary (Patient reference)
+        beneficiary = resource.get("beneficiary")
+        if beneficiary:
+            beneficiary_ref = beneficiary.get("reference", "")
+            if beneficiary_ref:
+                insurance_obj["Plan"]["ID"] = beneficiary_ref.replace("Patient/", "")
+
+        # Transform relationship
+        relationship = resource.get("relationship")
+        if relationship:
+            relationship_coding = relationship.get("coding", [])
+            if relationship_coding:
+                rel_code = relationship_coding[0]
+                insurance_obj["Insured"]["Relationship"] = {
+                    "Code": rel_code.get("code"),
+                    "CodeSystem": rel_code.get("system"),
+                    "CodeSystemName": None,
+                    "Name": rel_code.get("display"),
+                }
+            relationship_text = relationship.get("text")
+            if relationship_text and not insurance_obj["Insured"]["Relationship"]:
+                insurance_obj["Insured"]["Relationship"] = {
+                    "Code": None,
+                    "CodeSystem": None,
+                    "CodeSystemName": None,
+                    "Name": relationship_text,
+                }
+
+        # Transform period (EffectiveDate and ExpirationDate)
+        period = resource.get("period")
+        if period:
+            insurance_obj["EffectiveDate"] = period.get("start")
+            insurance_obj["ExpirationDate"] = period.get("end")
+
+        # Transform payor (Organization - insurance company)
+        payor = resource.get("payor", [])
+        if payor and len(payor) > 0:
+            payor_ref = payor[0].get("reference", "")
+            if payor_ref:
+                org_id = payor_ref.replace("Organization/", "")
+                insurance_obj["Company"] = {
+                    "ID": org_id,
+                    "IDType": None,
+                    "Name": payor[0].get("display"),
+                    "Address": {
+                        "StreetAddress": None,
+                        "City": None,
+                        "State": None,
+                        "ZIP": None,
+                        "County": None,
+                        "Country": None,
+                    },
+                    "PhoneNumber": None,
+                }
+
+        # Transform class (Group information)
+        class_list = resource.get("class", [])
+        if class_list:
+            for class_item in class_list:
+                class_type = class_item.get("type", {})
+                class_type_coding = class_type.get("coding", [])
+                if class_type_coding:
+                    type_code = class_type_coding[0].get("code")
+                    if type_code == "group":
+                        insurance_obj["GroupNumber"] = class_item.get("value")
+                        insurance_obj["GroupName"] = class_item.get("name")
+                        break
+
+        # Transform order (Priority)
+        order = resource.get("order")
+        if order is not None:
+            insurance_obj["Priority"] = order
+
+        return insurance_obj
 
 class MedicationNewTransformer(Transformer):
 

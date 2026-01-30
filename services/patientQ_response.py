@@ -156,5 +156,6 @@ patient_query = {
 "Allergies":[],
 "Medications":[],
 "Problems":[],
-"VitalSigns":[]
+"VitalSigns":[],
+"Insurances":[]
 }
