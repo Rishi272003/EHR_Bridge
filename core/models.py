@@ -5,6 +5,8 @@ import json
 from django.conf import settings
 from django.core.validators import URLValidator
 from .utils import generate_code_verifier, generate_code_challenge
+from urllib.parse import quote
+
 # Create your models here.
 
 class BaseModel(models.Model):
@@ -100,14 +102,22 @@ class EHRConnection(BaseModel):
                 self.token_url = selected_ehr_object["auth_url_prod"]
                 self.authorize_url = selected_ehr_object["auth_code_prod"]
         elif self.ehr_name=="PracticeFusion":
-            if self.ehr_environment == "sandbox":
-                self.base_url = selected_ehr_object["base_url_test"]
-                self.token_url = selected_ehr_object["auth_url_test"]
-                self.authorize_url = selected_ehr_object["auth_code_test"]
-            else:
-                self.base_url = selected_ehr_object["base_url_prod"]
-                self.token_url = selected_ehr_object["auth_url_prod"]
-                self.authorize_url = selected_ehr_object["auth_code_prod"]
+            self.base_url = selected_ehr_object["base_url_test"].format(practiceid=self.practice_id)
+            self.token_url = selected_ehr_object["auth_url_test"].format(practiceid=self.practice_id)
+            self.authorize_url = selected_ehr_object["auth_code_test"].format(practiceid=self.practice_id)
+            self.state = (
+                    f"{self.uuid},{self.ehr_name.lower()},{self.app_type.lower()}"
+                )
+            self.customer_auth_url = (
+                    "{}?response_type=code&client_id={}&redirect_uri={}"
+                    "&scope={}&state={}".format(
+                        self.authorize_url,
+                        self.client_id,
+                        self.redirect_uri,
+                        self.scope,
+                        self.state,
+                    )
+                )
         elif self.ehr_name=="eclinicalworks":
             if self.ehr_environment == "sandbox":
                 self.base_url = selected_ehr_object["base_url_test"].format(practiceid=self.practice_id)
@@ -117,6 +127,11 @@ class EHRConnection(BaseModel):
                 self.state = (
                     f"{self.uuid},{self.ehr_name.lower()},{self.app_type.lower()}"
                 )
+                if self.scope:
+                    self.scope = " ".join(
+                        self.scope.replace("\\n", " ").replace("\n", " ").split()
+                    )
+                    encoded_scopes = quote(self.scope, safe='/')
                 self.redirect_uri = selected_ehr_object.get("redirect_uri")
                 self.customer_auth_url = (
                     "{}?response_type=code&client_id={}&redirect_uri={}"
@@ -124,7 +139,7 @@ class EHRConnection(BaseModel):
                         self.authorize_url,
                         self.client_id,
                         self.redirect_uri,
-                        self.scope,
+                        encoded_scopes,
                         self.code_challenge,
                         self.audiance,
                         self.state,
