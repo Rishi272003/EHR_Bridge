@@ -1,3 +1,4 @@
+import logging
 
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -8,6 +9,8 @@ import requests
 from django.utils import timezone
 from core.models import EHRConnection
 from django.shortcuts import redirect
+
+logger = logging.getLogger(__name__)
 
 @csrf_exempt
 @require_http_methods(["GET"])
@@ -87,16 +90,14 @@ def ecw_callback(request):
             try:
                 token_data = response.json()
             except ValueError:
-                # If response is not JSON, return error
                 return JsonResponse(
                     {
                         "error": "Invalid response from token endpoint",
-                        "response": response.text[:500],  # Limit response length
+                        "response": response.text[:500],
                     },
                     status=500,
                 )
         except requests.exceptions.HTTPError as e:
-            # Handle HTTP errors (4xx, 5xx)
             error_response = None
             if hasattr(e.response, "text"):
                 try:
@@ -128,7 +129,6 @@ def ecw_callback(request):
         ecw_connection.access_token_generated_at = timezone.now()
         ecw_connection.save()
 
-
         # Redirect to org_redirect_uri if set, otherwise return JSON
         if ecw_connection.org_redirect_uri:
             redirect_url = (
@@ -157,6 +157,7 @@ def ecw_callback(request):
         )
 
     except Exception as e:
+        logger.exception("ECW callback failed")
         return JsonResponse(
             {"error": "Internal server error", "details": str(e)}, status=500
         )

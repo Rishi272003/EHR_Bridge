@@ -21,7 +21,9 @@ class MediaGetTransformer(Transformer):
 
     def transform(self):
         patient_documents = DocumentReference(self.connection)
-        patient_documents.authenticate()
+        auth_status = patient_documents.authenticate()
+        if auth_status is None:
+            return {"Error": "Authentication failed - unable to obtain valid access token", "statuscode": 401}
         patient_id = self.source_json.get("Meta",{}).get("Source",{}).get("ID")
         if not patient_id:
             self.destination_response.update({"detail":"Patient ID is required"})

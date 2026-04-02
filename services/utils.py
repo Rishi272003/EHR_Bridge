@@ -16,6 +16,7 @@ from services.ehr.eclinicalworks.transformers.organization import OrganizationQu
 from services.ehr.eclinicalworks.transformers.organization import OrganizationCreateTransformer as ECWOrganizationCreateTransformer
 from services.ehr.eclinicalworks.transformers.practitioner import PractitionerQueryTransformer as ECWPractitionerQueryTransformer
 from services.ehr.eclinicalworks.transformers.document_reference import DocumentReferenceQueryTransformer as ECWDocumentReferenceQueryTransformer
+from services.ehr.eclinicalworks.transformers.task import TaskCreateTransformer as ECWTaskCreateTransformer
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ SUPPORTED_MEDIA_EHRS = {"eclinicalworks"}
 SUPPORTED_CLINICALS_PUSH_EHRS = {"eclinicalworks"}
 SUPPORTED_ORGANIZATION_EHRS = {"eclinicalworks"}
 SUPPORTED_DOCUMENT_REF_EHRS = {"eclinicalworks"}
+SUPPORTED_TASK_EHRS = {"eclinicalworks"}
 
 
 def _get_ehr_name(connection_obj):
@@ -255,3 +257,20 @@ def get_document_reference_transformer(connection_obj, source_data):
             return transformer.transform()
         case _:
             return _unsupported_ehr_response(ehr_name, "document reference", SUPPORTED_DOCUMENT_REF_EHRS)
+
+
+def create_task_transformer(connection_obj, source_data):
+    """
+    Get the appropriate task create transformer for the EHR type.
+    """
+    ehr_name = _get_ehr_name(connection_obj)
+    if not ehr_name:
+        logger.error("Invalid connection object for task create transformer")
+        return {"error": "Invalid connection object"}
+
+    match ehr_name:
+        case "eclinicalworks":
+            transformer = ECWTaskCreateTransformer(connection_obj, source_data)
+            return transformer.transform()
+        case _:
+            return _unsupported_ehr_response(ehr_name, "task create", SUPPORTED_TASK_EHRS)

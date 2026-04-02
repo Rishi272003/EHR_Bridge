@@ -37,7 +37,11 @@ class PatientQueryTransformer(Transformer):
             else:
                 return Response({"error": "Invalid ID Type"}, status=status.HTTP_400_BAD_REQUEST)
             patients_chart = Chart(self.connection)
-            patients_chart.authenticate()
+            auth_status = patients_chart.authenticate()
+            if auth_status is None:
+                self.destination_response.update({"Error": "Authentication failed - unable to obtain valid access token"})
+                self.destination_response.update({"statuscode": 401})
+                return self.destination_response
             for event in events:
                 event = event.lower()
                 # Demographics Data (also handles "patient" event)

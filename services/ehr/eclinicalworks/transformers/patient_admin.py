@@ -20,6 +20,123 @@ class NewPatientTransformer(Transformer):
         }
         self.destination_json = {}
 
+    def _redox_to_fhir(self, patient_data):
+        """
+        Convert Redox-style Patient payload to FHIR Patient resource.
+        """
+        demographics = patient_data.get("Demographics", {})
+        identifiers = patient_data.get("Identifiers", [])
+
+        fhir_patient = {
+            "resourceType": "Patient",
+            "meta": {
+                "profile": ["http://hl7.org/fhir/us/core/StructureDefinition/us-core-patient"]
+            },
+        }
+
+        # Name
+        given = []
+        if demographics.get("FirstName"):
+            given.append(demographics["FirstName"])
+        if demographics.get("MiddleName"):
+            given.append(demographics["MiddleName"])
+
+        name_obj = {}
+        if demographics.get("LastName"):
+            name_obj["family"] = demographics["LastName"]
+        if given:
+            name_obj["given"] = given
+        if name_obj:
+            fhir_patient["name"] = [name_obj]
+
+        # Gender
+        sex = demographics.get("Sex", "").lower()
+        if sex in ("male", "m"):
+            fhir_patient["gender"] = "male"
+        elif sex in ("female", "f"):
+            fhir_patient["gender"] = "female"
+        elif sex:
+            fhir_patient["gender"] = sex
+
+        # DOB
+        if demographics.get("DOB"):
+            fhir_patient["birthDate"] = demographics["DOB"]
+
+        # Identifiers
+        if identifiers:
+            fhir_patient["identifier"] = []
+            for ident in identifiers:
+                ident_obj = {
+                    "use": ident.get("IDType", "secondary"),
+                    "value": ident.get("ID"),
+                }
+                if ident.get("System"):
+                    ident_obj["system"] = ident["System"]
+                fhir_patient["identifier"].append(ident_obj)
+
+        # SSN
+        if demographics.get("SSN"):
+            fhir_patient.setdefault("identifier", []).append({
+                "use": "usual",
+                "system": "http://hl7.org/fhir/sid/us-ssn",
+                "value": demographics["SSN"],
+            })
+
+        # Phone numbers
+        phone = demographics.get("PhoneNumber", {})
+        email_list = demographics.get("EmailAddresses", [])
+        telecom = []
+        if phone.get("Home"):
+            telecom.append({"system": "phone", "use": "home", "value": phone["Home"]})
+        if phone.get("Mobile"):
+            telecom.append({"system": "phone", "use": "mobile", "value": phone["Mobile"]})
+        if phone.get("Office"):
+            telecom.append({"system": "phone", "use": "work", "value": phone["Office"]})
+        for email in email_list:
+            if email.get("Address"):
+                telecom.append({"system": "email", "value": email["Address"]})
+        if telecom:
+            fhir_patient["telecom"] = telecom
+
+        # Address
+        addr = demographics.get("Address", {})
+        if any(addr.get(k) for k in ("StreetAddress", "City", "State", "ZIP", "Country")):
+            address_obj = {"use": "home"}
+            if addr.get("StreetAddress"):
+                address_obj["line"] = [addr["StreetAddress"]]
+            if addr.get("City"):
+                address_obj["city"] = addr["City"]
+            if addr.get("State"):
+                address_obj["state"] = addr["State"]
+            if addr.get("ZIP"):
+                address_obj["postalCode"] = addr["ZIP"]
+            if addr.get("Country"):
+                address_obj["country"] = addr["Country"]
+            fhir_patient["address"] = [address_obj]
+
+        # Race extension
+        if demographics.get("Race"):
+            fhir_patient.setdefault("extension", []).append({
+                "url": "http://hl7.org/fhir/us/core/StructureDefinition/us-core-race",
+                "extension": [{"url": "text", "valueString": demographics["Race"]}],
+            })
+
+        # Ethnicity extension
+        if demographics.get("Ethnicity"):
+            fhir_patient.setdefault("extension", []).append({
+                "url": "http://hl7.org/fhir/us/core/StructureDefinition/us-core-ethnicity",
+                "extension": [{"url": "text", "valueString": demographics["Ethnicity"]}],
+            })
+
+        # Language
+        if demographics.get("Language"):
+            fhir_patient["communication"] = [{
+                "language": {"text": demographics["Language"]},
+                "preferred": True,
+            }]
+
+        return fhir_patient
+
     def transform(self):
         try:
             # Extract Patient resource from FHIR Bundle or source data
@@ -31,15 +148,14 @@ class NewPatientTransformer(Transformer):
                 if self.source_json.get("resourceType") == "Bundle":
                     entries = self.source_json.get("entry", [])
                     if entries:
-                        # Find Patient resource in the bundle
                         for entry in entries:
                             resource = entry.get("resource", {})
                             if resource.get("resourceType") == "Patient":
                                 patient_resource = resource
                                 break
                 elif self.source_json.get("resourceType") == "Patient":
-                    # Direct Patient resource
                     patient_resource = self.source_json
+
                 # Format 2: Nested in patient_data (from API view)
                 elif self.source_json.get("patient_data"):
                     patient_data = self.source_json.get("patient_data")
@@ -54,11 +170,13 @@ class NewPatientTransformer(Transformer):
                                         break
                         elif patient_data.get("resourceType") == "Patient":
                             patient_resource = patient_data
-                # Format 3: Legacy format (old structure)
+                        # Redox-style format inside patient_data
+                        elif patient_data.get("Patient"):
+                            patient_resource = self._redox_to_fhir(patient_data["Patient"])
+
+                # Format 3: Redox-style at top level
                 elif self.source_json.get("Patient"):
-                    # Legacy format - convert to FHIR if needed
-                    # For now, we'll skip this and require FHIR format
-                    pass
+                    patient_resource = self._redox_to_fhir(self.source_json["Patient"])
 
             if not patient_resource:
                 return Response(
@@ -68,10 +186,25 @@ class NewPatientTransformer(Transformer):
 
             # Initialize Patient client
             new_patient = Patient(self.connection)
-            new_patient.authenticate()
+            auth_status = new_patient.authenticate()
+            if auth_status is None:
+                self.destination_response.update({"Error": "Authentication failed - unable to obtain valid access token"})
+                self.destination_response.update({"statuscode": 401})
+                return self.destination_response
 
             # Build FHIR Patient resource for eClinicalWorks
             self.destination_json = {}
+
+            # Required: resourceType must always be present
+            self.destination_json["resourceType"] = "Patient"
+
+            # Add meta profile if present, otherwise set default
+            if patient_resource.get("meta"):
+                self.destination_json["meta"] = patient_resource.get("meta")
+            else:
+                self.destination_json["meta"] = {
+                    "profile": ["http://hl7.org/fhir/us/core/StructureDefinition/us-core-patient"]
+                }
 
             # Required: active (boolean)
             self.destination_json["active"] = patient_resource.get("active", True)
@@ -265,26 +398,18 @@ class NewPatientTransformer(Transformer):
             if general_practitioner:
                 self.destination_json["generalPractitioner"] = general_practitioner
 
-            # Add resourceType and meta if present
-            if patient_resource.get("resourceType"):
-                self.destination_json["resourceType"] = patient_resource.get("resourceType")
-
-            if patient_resource.get("meta"):
-                self.destination_json["meta"] = patient_resource.get("meta")
-
             # Add id if present (for updates, not creates)
             if patient_resource.get("id"):
                 self.destination_json["id"] = patient_resource.get("id")
 
-            print("FHIR Patient payload for eClinicalWorks:", self.destination_json)
-
             # Create patient via eClinicalWorks API
-            # Pass the entire FHIR Patient resource as a single resource
-            # The create_new_patient method will handle the payload formatting
-            patient_created, status_code = new_patient.create_new_patient(**self.destination_json)
+            # Pass the FHIR Patient resource directly — the category wraps it in a Bundle
+            patient_created, status_code = new_patient.create_new_patient(self.destination_json)
 
             # Add raw response if Test mode is enabled
-            if self.source_json.get("Meta", {}).get("Test"):
+            # source_json comes as {"type": "new_patient", "patient_data": request_body}
+            patient_data = self.source_json.get("patient_data", {})
+            if patient_data.get("Meta", {}).get("Test") or patient_data.get("Test"):
                 self.destination_response["Meta"]["Raw"].append(patient_created)
 
             # Add response to destination

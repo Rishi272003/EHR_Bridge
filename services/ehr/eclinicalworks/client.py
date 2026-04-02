@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import timedelta
 
@@ -57,7 +58,12 @@ class ECWClient(SuperClient):
         Read stored token from database, refreshing if expired.
         Returns the valid token or None if unavailable.
         """
+        # If no access token, try refresh if we have a refresh token
         if not self.ehr.access_token:
+            if self.ehr.refresh_token:
+                logger.info("No access token found, attempting refresh for connection %s", self.ehr.uuid)
+                if self._refresh_token():
+                    return self.ehr.access_token
             return None
 
         # Check if token is about to expire (4.8 minute threshold for 5-min tokens)
@@ -65,9 +71,15 @@ class ECWClient(SuperClient):
             expiry_threshold = timezone.now() - timedelta(minutes=4.8)
             if self.ehr.access_token_generated_at <= expiry_threshold:
                 # Token expired or about to expire - refresh it
+                logger.info("Access token expired/expiring for connection %s, refreshing...", self.ehr.uuid)
                 if not self._refresh_token():
                     logger.error("Token refresh failed for connection %s", self.ehr.uuid)
                     return None
+        else:
+            # No timestamp means we can't verify expiry — refresh to be safe
+            logger.warning("No access_token_generated_at for connection %s, refreshing token", self.ehr.uuid)
+            if not self._refresh_token():
+                return None
 
         return self.ehr.access_token
 
@@ -95,16 +107,27 @@ class ECWClient(SuperClient):
             )
             if response.status_code == 200:
                 token_data = response.json()
-                self.ehr.access_token = token_data.get("access_token")
-                self.ehr.refresh_token = token_data.get("refresh_token")
+                new_access_token = token_data.get("access_token")
+                new_refresh_token = token_data.get("refresh_token")
+
+                if not new_access_token:
+                    logger.error(
+                        "Token refresh response missing access_token for connection %s. Response keys: %s",
+                        self.ehr.uuid, list(token_data.keys())
+                    )
+                    return False
+
+                self.ehr.access_token = new_access_token
+                if new_refresh_token:
+                    self.ehr.refresh_token = new_refresh_token
                 self.ehr.access_token_generated_at = timezone.now()
                 self.ehr.save(update_fields=['access_token', 'refresh_token', 'access_token_generated_at'])
-                logger.debug("Token refreshed successfully for connection %s", self.ehr.uuid)
+                logger.info("Token refreshed successfully for connection %s", self.ehr.uuid)
                 return True
             else:
                 logger.error(
-                    "Token refresh failed with status %s for connection %s",
-                    response.status_code, self.ehr.uuid
+                    "Token refresh failed with status %s for connection %s. Response: %s",
+                    response.status_code, self.ehr.uuid, response.text[:500]
                 )
                 return False
         except requests.exceptions.Timeout:
@@ -158,7 +181,6 @@ class ECWClient(SuperClient):
             params = {}
 
         self.headers["Content-Type"] = content_type
-
         try:
             response = requests.get(
                 url,
@@ -196,12 +218,13 @@ class ECWClient(SuperClient):
         self.headers["Content-Type"] = content_type
 
         try:
-            # Use json parameter for JSON content type, data for form-encoded
-            if content_type == "application/json" and data:
+            # For JSON-based content types, serialize manually to preserve
+            # the custom Content-Type header (requests.post(json=) overrides it)
+            if "json" in content_type and data:
                 response = requests.post(
                     url,
                     headers=self.headers,
-                    json=data,
+                    data=json.dumps(data),
                     timeout=REQUEST_TIMEOUT
                 )
             else:

@@ -122,6 +122,13 @@ ECW_URLS = {
             "path": "/DocumentReference",
         },
     },
+    "Task": {
+        "create_task": {
+            "method": "POST",
+            "path": "",
+            "description": "Create a Task (Action) in ECW system via FHIR Bundle",
+        },
+    },
     "Binary": {
         "get_patient_ccda": {
             "method": "GET",

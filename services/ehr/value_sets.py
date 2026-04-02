@@ -8564,8 +8564,6 @@ patient_admin_value_sets = {
         "Patient": {
             "Identifiers": [
                 {"ID": "0000000001", "IDType": "MR"},
-                {"ID": "3054032", "IDType": "orgid"},
-                {"ID": "a1d4ee8aba494ca", "IDType": "NIST"},
             ],
             "Demographics": {
                 "FirstName": "Timothy",
@@ -8593,7 +8591,6 @@ patient_admin_value_sets = {
                     "Country": "US",
                 },
             },
-            "Notes": [],
             "Contacts": [
                 {
                     "FirstName": "Barbara",
@@ -8617,21 +8614,7 @@ patient_admin_value_sets = {
                     "Roles": ["Emergency Contact"],
                 }
             ],
-            "Allergies": [
-                {
-                    "Code": "7982",
-                    "Codeset": "RxNorm",
-                    "Name": "Penicillin",
-                    "Type": {"Code": None, "Codeset": None, "Name": None},
-                    "OnsetDateTime": None,
-                    "Reaction": [
-                        {"Code": "28926001", "Codeset": "SNOMED CT", "Name": "Rash"},
-                        {"Code": "247472004", "Codeset": "SNOMED CT", "Name": "Hives"},
-                    ],
-                    "Severity": {"Code": None, "Codeset": None, "Name": None},
-                    "Status": None,
-                }
-            ],
+
             "PCP": {
                 "NPI": "4356789876",
                 "ID": "4356789876",
@@ -8656,91 +8639,6 @@ patient_admin_value_sets = {
                     "Room": None,
                 },
             },
-            "Guarantor": {
-                "Number": "10001910",
-                "FirstName": "Kent",
-                "MiddleName": None,
-                "LastName": "Bixby",
-                "SSN": None,
-                "DOB": None,
-                "Sex": None,
-                "Spouse": {"FirstName": "Barbara", "LastName": "Bixby"},
-                "Address": {
-                    "StreetAddress": "4762 Hickory Street",
-                    "City": "Monroe",
-                    "State": "WI",
-                    "ZIP": "53566",
-                    "County": "Green",
-                    "Country": "USA",
-                },
-                "PhoneNumber": {"Home": None, "Business": None, "Mobile": None},
-                "EmailAddresses": [],
-                "Type": None,
-                "RelationToPatient": "Father",
-                "Employer": {
-                    "Name": "Accelerator Labs",
-                    "Address": {
-                        "StreetAddress": "1456 Old Sauk Road",
-                        "City": "Madison",
-                        "State": "WI",
-                        "ZIP": "53719",
-                        "County": "Dane",
-                        "Country": "USA",
-                    },
-                    "PhoneNumber": "+18083451121",
-                },
-            },
-            "Insurances": [
-                {
-                    "Plan": {
-                        "ID": "31572",
-                        "IDType": "Payor ID",
-                        "Name": "HMO Deductible Plan",
-                        "Type": None,
-                    },
-                    "MemberNumber": None,
-                    "Company": {
-                        "ID": "60054",
-                        "IDType": None,
-                        "Name": "aetna (60054 0131)",
-                        "Address": {
-                            "StreetAddress": "PO Box 14080",
-                            "City": "Lexington",
-                            "State": "KY",
-                            "ZIP": "40512-4079",
-                            "County": "Fayette",
-                            "Country": "US",
-                        },
-                        "PhoneNumber": "+18089541123",
-                    },
-                    "GroupNumber": "847025-024-0009",
-                    "GroupName": "Accelerator Labs",
-                    "EffectiveDate": "2015-01-01",
-                    "ExpirationDate": "2020-12-31",
-                    "PolicyNumber": "9140860055",
-                    "Priority": None,
-                    "AgreementType": None,
-                    "CoverageType": None,
-                    "Insured": {
-                        "Identifiers": [],
-                        "LastName": None,
-                        "MiddleName": None,
-                        "FirstName": None,
-                        "SSN": None,
-                        "Relationship": None,
-                        "DOB": None,
-                        "Sex": None,
-                        "Address": {
-                            "StreetAddress": None,
-                            "City": None,
-                            "State": None,
-                            "ZIP": None,
-                            "County": None,
-                            "Country": None,
-                        },
-                    },
-                }
-            ],
         },
     },
     "update_patient": {
@@ -13076,5 +12974,42 @@ media = {
                     "DirectAddressFrom": "pat.willis@ehrbridge.com",
                     "DirectAddressTo": "john.aker@ehrbridge.com"
             }
+    },
+}
+
+task_value_sets = {
+    "create_task": {
+        "Meta": {
+            "DataModel": "Task",
+            "EventType": "Create",
+            "Test": True,
+            "Source": {
+                "ID": "connection-uuid-here",
+                "Name": "connectionid",
+            },
+        },
+        "Task": {
+            "Status": "ready",
+            "Intent": "order",
+            "Priority": "routine",
+            "Focus": "2025 demo write back",
+            "Patient": {
+                "ID": "Lt2IFR5Ah76n4d8TFP5gBAi6ihzoQPOaltfZTiBRpVQ",
+                "Name": "Peter James Chalmers",
+            },
+            "Requester": {
+                "ID": "Lt2IFR5Ah76n4d8TFP5gBPiX1g1-Q2P9s8IYoGZvbFM",
+                "Name": "Dr Adam Careful",
+            },
+            "Owner": {
+                "ID": "Lt2IFR5Ah76n4d8TFP5gBPiX1g1-Q2P9s8IYoGZvbFM",
+                "Name": "Clinical Laboratory @ Acme Hospital",
+            },
+            "ExecutionPeriod": {
+                "Start": "2023-10-09T08:25:05+10:00",
+                "End": "2023-10-10T08:25:05+10:00",
+            },
+            "Note": "This is an example task note",
+        },
     },
 }

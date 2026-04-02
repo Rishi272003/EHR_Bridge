@@ -22,7 +22,11 @@ class QueryTransformer(Transformer):
     def transform(self):
         try:
             patient = Patient(self.connection_obj)
-            patient.authenticate()
+            auth_status = patient.authenticate()
+            if auth_status is None:
+                self.destination_response.update({"Error": "Authentication failed - unable to obtain valid access token"})
+                self.destination_response.update({"statuscode": 401})
+                return self.destination_response
             demographics  = self.source_data.get("Patient",{}).get("Demographics",{})
             if demographics.get("FirstName") and demographics.get("LastName"):
                 self.destination_json["name"] = (
@@ -260,7 +264,6 @@ class QueryTransformer(Transformer):
                         )
                 else:
                     # No entries found
-                    print("No entries in response")
                     self.destination_response["PotentialMatches"] = []
             else:
                 self.destination_response.update(patient_response)
@@ -271,5 +274,4 @@ class QueryTransformer(Transformer):
         except Exception as e:
             self.destination_response.update({"Error": str(e)})
             self.destination_response.update({"statuscode": status.HTTP_400_BAD_REQUEST})
-        print("destination_response",self.destination_response)
         return self.destination_response

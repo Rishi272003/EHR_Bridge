@@ -31,6 +31,7 @@ from .utils import (
     get_organization_transformer,
     create_organization_transformer,
     get_document_reference_transformer,
+    create_task_transformer,
 )
 from .ehr.athena.categories.Appointment import Appointment
 from services.ehr.value_sets import (
@@ -42,6 +43,7 @@ from services.ehr.value_sets import (
     media,
     medias_value_sets,
     organization_query_value_sets,
+    task_value_sets,
 )
 
 logger = logging.getLogger(__name__)
@@ -510,7 +512,14 @@ class NewPatientAPIView(APIView):
     def post(self,request):
         try:
             request_body = request.data
-            connection_obj = EHRConnection.objects.filter(uuid=request_body["connection_id"]).first()
+            # Support both connection_id and Meta.Source.ID
+            connection_id = request_body.get("connection_id") or request_body.get("Meta", {}).get("Source", {}).get("ID")
+            if not connection_id:
+                return Response(
+                    {"detail": "Connection ID is required in connection_id or Meta.Source.ID"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            connection_obj = EHRConnection.objects.filter(uuid=connection_id).first()
             if not connection_obj:
                 return Response({"detail": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)
             connection_data = model_to_dict(connection_obj)
@@ -806,3 +815,46 @@ class DocumentReferenceQueryAPIView(APIView):
             return Response(transformer_response, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"detail": f"Something went wrong: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class TaskCreateAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    @extend_schema(
+        summary="Create Task (Action)",
+        description="Create a Task/Action in the EHR system. Posts a FHIR Task resource via Bundle transaction.",
+        request=inline_serializer(
+            name="Task-Create",
+            fields={
+                "Source_json": serializers.CharField(),
+            },
+        ),
+        examples=[
+            OpenApiExample(
+                name="Task-Create",
+                value=task_value_sets.get("create_task"),
+            )
+        ],
+    )
+    def post(self, request):
+        try:
+            request_body = request.data
+            connection_id = request_body.get("Meta", {}).get("Source", {}).get("ID")
+            if not connection_id:
+                return Response(
+                    {"detail": "Connection ID is required in Meta.Source.ID"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            connection_obj = EHRConnection.objects.filter(uuid=connection_id).first()
+            if not connection_obj:
+                return Response(
+                    {"detail": "Connection not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            transformer_response = create_task_transformer(connection_obj, request_body)
+            return Response(transformer_response, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            logger.exception("TaskCreate failed for connection %s", connection_id)
+            return Response(
+                {"detail": f"Something went wrong: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

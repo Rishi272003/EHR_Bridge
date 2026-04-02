@@ -30,7 +30,11 @@ class VisitQuerTransformer(Transformer):
 
     def transform(self):
         chart = Chart(self.connection)
-        chart.authenticate()
+        auth_status = chart.authenticate()
+        if auth_status is None:
+            self.destination_response.update({"Error": "Authentication failed - unable to obtain valid access token"})
+            self.destination_response.update({"statuscode": 401})
+            return self.destination_response
         try:
             # Extract patient ID from source data
             patient_identifiers = self.source_json.get("Patient", {}).get("Identifiers", [])
@@ -57,11 +61,9 @@ class VisitQuerTransformer(Transformer):
                     patientid=patient_id, start_date=start_date, end_date=end_date
                 )
             elif patient_id:
-                print("patient_id", patient_id)
                 encounter_response, status_code = chart.get_patient_encounter(
                     patientid=patient_id
                 )
-                print("encounter_response", encounter_response, status_code)
             else:
                 return Response({"Error": "Invalid request parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
