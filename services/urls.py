@@ -29,6 +29,7 @@ urlpatterns = [
     path("organization/create-organization/", CreateOrganizationAPIView.as_view(), name="create_organization"),
     # Document References
     path("document-reference/query/", DocumentReferenceQueryAPIView.as_view(), name="document_reference_query"),
+    path("document-reference/create/", DocumentReferenceCreateAPIView.as_view(), name="document_reference_create"),
     # Tasks
     path("task/create/", TaskCreateAPIView.as_view(), name="task_create"),
 ]

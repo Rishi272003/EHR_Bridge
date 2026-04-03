@@ -1,5 +1,188 @@
+from datetime import datetime
+
+from rest_framework import status
+
 from services.ehr.transformer import Transformer
 from services.ehr.eclinicalworks.categories.DocumentReference import DocumentReference
+
+
+class DocumentReferenceCreateTransformer(Transformer):
+    """
+    Transformer for pushing PDF documents to eClinicalWorks via FHIR DocumentReference.
+    Builds a FHIR Bundle transaction with a DocumentReference resource containing
+    base64-encoded PDF content and POSTs to the ECW FHIR base URL.
+    """
+
+    def __init__(self, connection_obj, source_data):
+        self.connection = connection_obj
+        self.source_data = source_data
+        self.destination_response = {
+            "Meta": {
+                "DataModel": "DocumentReference",
+                "EventType": "CreateResponse",
+                "Source": {"ID": str(self.connection.uuid), "Name": "connectionid"},
+                "Raw": [],
+            },
+        }
+
+    def transform(self):
+        try:
+            doc_client = DocumentReference(self.connection)
+            auth_status = doc_client.authenticate()
+            if auth_status is None:
+                self.destination_response.update({
+                    "Error": "Authentication failed - unable to obtain valid access token",
+                    "statuscode": 401,
+                })
+                return self.destination_response
+
+            doc_data = self.source_data.get("Document", {})
+
+            # Required fields
+            patient_id = self.source_data.get("Patient", {}).get("ID")
+            if not patient_id:
+                patient_identifiers = self.source_data.get("Patient", {}).get("Identifiers", [])
+                if patient_identifiers:
+                    patient_id = patient_identifiers[0].get("ID")
+
+            base64_data = doc_data.get("Content", {}).get("Data")
+            if not patient_id or not base64_data:
+                self.destination_response.update({
+                    "Error": "Patient ID and Document Content Data (base64 PDF) are required",
+                    "statuscode": 400,
+                })
+                return self.destination_response
+
+            content_type = doc_data.get("Content", {}).get("ContentType", "application/pdf")
+
+            # Optional fields with defaults per US Core DocumentReference profile
+            doc_status = doc_data.get("Status", "current")
+
+            doc_type = doc_data.get("Type", {})
+            type_code = doc_type.get("Code", "34133-9")
+            type_display = doc_type.get("Display", "Summary of episode note")
+            type_system = doc_type.get("System", "http://loinc.org")
+
+            doc_category = doc_data.get("Category", {})
+            category_code = doc_category.get("Code", "clinical-note")
+            category_display = doc_category.get("Display", "Clinical Note")
+            category_system = doc_category.get(
+                "System",
+                "http://hl7.org/fhir/us/core/CodeSystem/us-core-documentreference-category",
+            )
+
+            author_id = doc_data.get("Author", {}).get("ID")
+            author_type = doc_data.get("Author", {}).get("Type", "Practitioner")
+            doc_date = doc_data.get("Date") or datetime.utcnow().strftime(
+                "%Y-%m-%dT%H:%M:%S.000+00:00"
+            )
+
+            # Build FHIR DocumentReference resource
+            doc_resource = {
+                "resourceType": "DocumentReference",
+                "meta": {
+                    "lastUpdated": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S+00:00"),
+                    "profile": [
+                        "http://hl7.org/fhir/us/core/StructureDefinition/us-core-documentreference"
+                    ],
+                },
+                "status": doc_status,
+                "type": {
+                    "coding": [
+                        {
+                            "system": type_system,
+                            "code": type_code,
+                            "display": type_display,
+                        }
+                    ],
+                    "text": type_display,
+                },
+                "category": [
+                    {
+                        "coding": [
+                            {
+                                "system": category_system,
+                                "code": category_code,
+                                "display": category_display,
+                            }
+                        ],
+                        "text": category_display,
+                    }
+                ],
+                "subject": {
+                    "reference": f"Patient/{patient_id}",
+                    "type": "Patient",
+                },
+                "date": doc_date,
+                "content": [
+                    {
+                        "attachment": {
+                            "contentType": content_type,
+                            "data": base64_data,
+                        }
+                    }
+                ],
+            }
+
+            if author_id:
+                doc_resource["author"] = [
+                    {
+                        "reference": f"{author_type}/{author_id}",
+                        "type": author_type,
+                    }
+                ]
+
+            # Wrap in FHIR Bundle transaction
+            bundle = {
+                "resourceType": "Bundle",
+                "id": "bundle-transaction",
+                "meta": {
+                    "lastUpdated": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                },
+                "type": "transaction",
+                "entry": [
+                    {
+                        "resource": doc_resource,
+                        "request": {
+                            "method": "POST",
+                            "url": "DocumentReference",
+                        },
+                    }
+                ],
+            }
+
+            # Send to ECW
+            response_data, status_code = doc_client.push_document(bundle)
+
+            if self.source_data.get("Meta", {}).get("Test"):
+                self.destination_response["Meta"]["Raw"].append(response_data)
+
+            if status_code in [200, 201]:
+                entries = response_data.get("entry", [])
+                doc_location = None
+                doc_id = None
+                if entries:
+                    resp = entries[0].get("response", {})
+                    doc_location = resp.get("location", "")
+                    doc_id = doc_location.split("/")[-1] if doc_location else None
+
+                self.destination_response.update({
+                    "DocumentReference": {
+                        "ID": doc_id,
+                        "Location": doc_location,
+                        "Status": doc_status,
+                    },
+                    "statuscode": status_code,
+                })
+            else:
+                self.destination_response.update(response_data if isinstance(response_data, dict) else {"Error": str(response_data)})
+                self.destination_response.update({"statuscode": status_code})
+
+        except Exception as e:
+            self.destination_response.update({"Error": str(e)})
+            self.destination_response.update({"statuscode": status.HTTP_400_BAD_REQUEST})
+
+        return self.destination_response
 
 
 class DocumentReferenceQueryTransformer(Transformer):

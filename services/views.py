@@ -31,6 +31,7 @@ from .utils import (
     get_organization_transformer,
     create_organization_transformer,
     get_document_reference_transformer,
+    create_document_reference_transformer,
     create_task_transformer,
 )
 from .ehr.athena.categories.Appointment import Appointment
@@ -815,6 +816,97 @@ class DocumentReferenceQueryAPIView(APIView):
             return Response(transformer_response, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"detail": f"Something went wrong: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class DocumentReferenceCreateAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    @extend_schema(
+        summary="Push Document (PDF) to EHR",
+        description="""Push a PDF document to the EHR system as a FHIR DocumentReference.
+        The document content must be base64-encoded. The resource conforms to
+        US Core DocumentReference Profile (v3.1.1).
+
+        Required fields:
+        - Patient ID (in Patient.ID or Patient.Identifiers[0].ID)
+        - Document content as base64 (in Document.Content.Data)
+
+        Optional fields:
+        - Document.Status (default: "current")
+        - Document.Type.Code (default: "34133-9" Summary of episode note)
+        - Document.Category.Code (default: "clinical-note")
+        - Document.Author.ID (Practitioner ID)
+        - Document.Date (default: current UTC time)
+        - Document.Content.ContentType (default: "application/pdf")
+        """,
+        request=inline_serializer(
+            name="DocumentReference-Create",
+            fields={
+                "Source_json": serializers.CharField(),
+            },
+        ),
+        examples=[
+            OpenApiExample(
+                name="DocumentReference-Create-PDF",
+                value={
+                    "Meta": {
+                        "DataModel": "DocumentReference",
+                        "EventType": "Create",
+                        "Test": True,
+                        "Source": {
+                            "ID": "connection-uuid-here",
+                            "Name": "connectionid",
+                        },
+                    },
+                    "Patient": {
+                        "ID": "patient-fhir-id",
+                    },
+                    "Document": {
+                        "Status": "current",
+                        "Type": {
+                            "Code": "34133-9",
+                            "Display": "Summary of episode note",
+                            "System": "http://loinc.org",
+                        },
+                        "Category": {
+                            "Code": "clinical-note",
+                            "Display": "Clinical Note",
+                        },
+                        "Author": {
+                            "ID": "practitioner-fhir-id",
+                            "Type": "Practitioner",
+                        },
+                        "Date": "2024-01-15T10:30:00.000-05:00",
+                        "Content": {
+                            "ContentType": "application/pdf",
+                            "Data": "<base64-encoded-pdf-content>",
+                        },
+                    },
+                },
+            )
+        ],
+    )
+    def post(self, request):
+        try:
+            request_body = request.data
+            connection_id = request_body.get("Meta", {}).get("Source", {}).get("ID")
+            if not connection_id:
+                return Response(
+                    {"detail": "Connection ID is required in Meta.Source.ID"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            connection_obj = EHRConnection.objects.filter(uuid=connection_id).first()
+            if not connection_obj:
+                return Response(
+                    {"detail": "Connection not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            transformer_response = create_document_reference_transformer(connection_obj, request_body)
+            return Response(transformer_response, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response(
+                {"detail": f"Something went wrong: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 class TaskCreateAPIView(APIView):

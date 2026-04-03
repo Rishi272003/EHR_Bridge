@@ -270,6 +270,20 @@ class DocumentReference(ECWClient):
         )
         return self.get(url)
 
+    def push_document(self, bundle_data):
+        """
+        Push a DocumentReference (PDF) via FHIR Bundle transaction.
+        POST [base] with Content-Type: application/fhir+json
+
+        Args:
+            bundle_data: Complete FHIR Bundle with DocumentReference entry
+
+        Returns:
+            Tuple of (response_data, status_code)
+        """
+        url = self.base_url
+        return self.post(url, content_type="application/fhir+json", data=bundle_data)
+
     def new_clinical_note(self, **kwargs):
         """
         Create a new clinical note (DocumentReference).
