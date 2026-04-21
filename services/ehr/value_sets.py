@@ -4087,6 +4087,18 @@ organization_query_value_sets = {
 }
 
 medications_value_sets = {
+    "medication_query": {
+        "Meta": {
+            "DataModel": "Medication",
+            "EventType": "Query",
+            "Test": True,
+            "Source": {
+                "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
+                "Name": "connectionid",
+            },
+        },
+        "Patient": {"Identifiers": [{"ID": "1313", "IDType": "EHRID"}]},
+    },
     "medications_new": {
         "Meta": {
             "DataModel": "Medications",
@@ -13011,5 +13023,20 @@ task_value_sets = {
             },
             "Note": "This is an example task note",
         },
+    },
+}
+
+conditions_value_sets = {
+    "condition_query": {
+        "Meta": {
+            "DataModel": "Condition",
+            "EventType": "Query",
+            "Test": True,
+            "Source": {
+                "ID": "f961cd8a-e84b-477b-8d1d-1f2dcfd7b2c5",
+                "Name": "connectionid",
+            },
+        },
+        "Patient": {"Identifiers": [{"ID": "1313", "IDType": "EHRID"}]},
     },
 }

@@ -19,6 +19,9 @@ urlpatterns = [
     path("provider/create/",CreateProviderAPIView.as_view(), name="create_provider"),
     # Medications
     path("medication/medication-new/",MedicationNewAPIView.as_view(), name="medication_new"),
+    path("medication/medication-query/", MedicationQueryAPIView.as_view(), name="medication_query"),
+    # Conditions
+    path("condition/condition-query/", ConditionQueryAPIView.as_view(), name="condition_query"),
     # Media
     path("media/create-media/",CreateMediaAPIView.as_view(), name="create_media"),
     path("media/get-media/",GetMediaAPIView.as_view(), name="get_media"),

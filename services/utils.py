@@ -10,6 +10,8 @@ from services.ehr.eclinicalworks.transformers.encounter import VisitQuerTransfor
 from services.ehr.eclinicalworks.transformers.patient_admin import NewPatientTransformer as ECWNewPatientTransformer
 from services.ehr.eclinicalworks.transformers.clinical_summary import ClinicalsPushTransformer as ECWClinicalsPushTransformer
 from services.ehr.eclinicalworks.transformers.clinical_summary import MedicationNewTransformer as ECWMedicationNewTransformer
+from services.ehr.eclinicalworks.transformers.clinical_summary import MedicationQueryTransformer as ECWMedicationQueryTransformer
+from services.ehr.eclinicalworks.transformers.clinical_summary import ConditionQueryTransformer as ECWConditionQueryTransformer
 from services.ehr.eclinicalworks.transformers.media import MediaNewTransformer as ECWMediaNewTransformer
 from services.ehr.eclinicalworks.transformers.media import MediaGetTransformer as ECWMediaGetTransformer
 from services.ehr.eclinicalworks.transformers.organization import OrganizationQueryTransformer as ECWOrganizationQueryTransformer
@@ -33,6 +35,8 @@ SUPPORTED_CLINICALS_PUSH_EHRS = {"eclinicalworks"}
 SUPPORTED_ORGANIZATION_EHRS = {"eclinicalworks"}
 SUPPORTED_DOCUMENT_REF_EHRS = {"eclinicalworks"}
 SUPPORTED_TASK_EHRS = {"eclinicalworks"}
+SUPPORTED_MEDICATION_QUERY_EHRS = {"eclinicalworks"}
+SUPPORTED_CONDITION_QUERY_EHRS = {"eclinicalworks"}
 
 
 def _get_ehr_name(connection_obj):
@@ -275,6 +279,40 @@ def create_document_reference_transformer(connection_obj, source_data):
             return transformer.transform()
         case _:
             return _unsupported_ehr_response(ehr_name, "document reference create", SUPPORTED_DOCUMENT_REF_EHRS)
+
+
+def get_medication_query_transformer(connection_obj, source_data):
+    """
+    Get the appropriate medication query transformer for the EHR type.
+    """
+    ehr_name = _get_ehr_name(connection_obj)
+    if not ehr_name:
+        logger.error("Invalid connection object for medication query transformer")
+        return {"error": "Invalid connection object"}
+
+    match ehr_name:
+        case "eclinicalworks":
+            transformer = ECWMedicationQueryTransformer(connection_obj, source_data)
+            return transformer.transform()
+        case _:
+            return _unsupported_ehr_response(ehr_name, "medication query", SUPPORTED_MEDICATION_QUERY_EHRS)
+
+
+def get_condition_query_transformer(connection_obj, source_data):
+    """
+    Get the appropriate condition query transformer for the EHR type.
+    """
+    ehr_name = _get_ehr_name(connection_obj)
+    if not ehr_name:
+        logger.error("Invalid connection object for condition query transformer")
+        return {"error": "Invalid connection object"}
+
+    match ehr_name:
+        case "eclinicalworks":
+            transformer = ECWConditionQueryTransformer(connection_obj, source_data)
+            return transformer.transform()
+        case _:
+            return _unsupported_ehr_response(ehr_name, "condition query", SUPPORTED_CONDITION_QUERY_EHRS)
 
 
 def create_task_transformer(connection_obj, source_data):

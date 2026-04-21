@@ -33,6 +33,8 @@ from .utils import (
     get_document_reference_transformer,
     create_document_reference_transformer,
     create_task_transformer,
+    get_medication_query_transformer,
+    get_condition_query_transformer,
 )
 from .ehr.athena.categories.Appointment import Appointment
 from services.ehr.value_sets import (
@@ -45,6 +47,8 @@ from services.ehr.value_sets import (
     medias_value_sets,
     organization_query_value_sets,
     task_value_sets,
+    medications_value_sets,
+    conditions_value_sets,
 )
 
 logger = logging.getLogger(__name__)
@@ -946,6 +950,96 @@ class TaskCreateAPIView(APIView):
             return Response(transformer_response, status=status.HTTP_201_CREATED)
         except Exception as e:
             logger.exception("TaskCreate failed for connection %s", connection_id)
+            return Response(
+                {"detail": f"Something went wrong: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class MedicationQueryAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Query Patient Medications",
+        description="Fetch MedicationAdministration records for a patient from the EHR.",
+        request=inline_serializer(
+            name="Medication-Query",
+            fields={"Source_json": serializers.CharField()},
+        ),
+        examples=[
+            OpenApiExample(
+                name="Medication-Query",
+                value=medications_value_sets.get("medication_query"),
+            )
+        ],
+    )
+    def post(self, request):
+        try:
+            request_body = request.data
+            connection_id = (
+                request_body.get("Meta", {}).get("Source", {}).get("ID")
+                or request_body.get("connection_id")
+            )
+            if not connection_id:
+                return Response(
+                    {"detail": "Connection ID is required in connection_id or Meta.Source.ID"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            connection_obj = EHRConnection.objects.filter(uuid=connection_id).first()
+            if not connection_obj:
+                return Response(
+                    {"detail": "Connection not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            transformer_response = get_medication_query_transformer(connection_obj, request_body)
+            return Response(transformer_response, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.exception("MedicationQuery failed")
+            return Response(
+                {"detail": f"Something went wrong: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class ConditionQueryAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Query Patient Conditions",
+        description="Fetch Condition records for a patient from the EHR.",
+        request=inline_serializer(
+            name="Condition-Query",
+            fields={"Source_json": serializers.CharField()},
+        ),
+        examples=[
+            OpenApiExample(
+                name="Condition-Query",
+                value=conditions_value_sets.get("condition_query"),
+            )
+        ],
+    )
+    def post(self, request):
+        try:
+            request_body = request.data
+            connection_id = (
+                request_body.get("Meta", {}).get("Source", {}).get("ID")
+                or request_body.get("connection_id")
+            )
+            if not connection_id:
+                return Response(
+                    {"detail": "Connection ID is required in connection_id or Meta.Source.ID"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            connection_obj = EHRConnection.objects.filter(uuid=connection_id).first()
+            if not connection_obj:
+                return Response(
+                    {"detail": "Connection not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            transformer_response = get_condition_query_transformer(connection_obj, request_body)
+            return Response(transformer_response, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.exception("ConditionQuery failed")
             return Response(
                 {"detail": f"Something went wrong: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -2114,3 +2114,378 @@ class ClinicalsPushTransformer(Transformer):
             logger.exception("Error transforming allergies")
             self.destination_response.update({"error": str(e)})
             return self.destination_response
+
+
+def _extract_patient_id(source_data):
+    patient = source_data.get("Patient", {}) or {}
+    patient_id = patient.get("ID")
+    if patient_id:
+        return patient_id
+    identifiers = patient.get("Identifiers") or []
+    if isinstance(identifiers, list) and identifiers:
+        return identifiers[0].get("ID")
+    if isinstance(identifiers, dict):
+        return identifiers.get("ID")
+    return None
+
+
+class MedicationQueryTransformer(Transformer):
+    """Query patient MedicationAdministration records from eClinicalWorks."""
+
+    def __init__(self, connection_obj, source_data):
+        self.connection = connection_obj
+        self.source_json = source_data
+        self.destination_response = {
+            "Meta": {
+                "DataModel": "Medication",
+                "EventType": "QueryResponse",
+                "Source": {"ID": str(self.connection.uuid), "Name": "connectionid"},
+                "Raw": [],
+            },
+            "Medications": [],
+        }
+
+    def transform(self):
+        try:
+            chart = Chart(self.connection)
+            auth_status = chart.authenticate()
+            if auth_status is None:
+                self.destination_response.update({
+                    "Error": "Authentication failed - unable to obtain valid access token",
+                    "statuscode": 401,
+                })
+                return self.destination_response
+
+            patient_id = _extract_patient_id(self.source_json)
+            if not patient_id:
+                self.destination_response.update({
+                    "Error": "Patient ID is required",
+                    "statuscode": 400,
+                })
+                return self.destination_response
+
+            response_data, status_code = chart.get_patient_medication(patient_id)
+
+            if self.source_json.get("Meta", {}).get("Test"):
+                self.destination_response["Meta"]["Raw"].append(response_data)
+
+            if status_code == 200 and isinstance(response_data, dict) \
+                    and response_data.get("resourceType") == "Bundle":
+                self.destination_response["Medications"] = _normalize_medication_bundle(response_data)
+                self.destination_response["statuscode"] = 200
+            else:
+                self.destination_response.update({
+                    "detail": "Failed to fetch medication data",
+                    "statuscode": status_code,
+                    "error": response_data,
+                })
+            return self.destination_response
+        except Exception as e:
+            logger.exception("Error in MedicationQueryTransformer")
+            self.destination_response.update({
+                "detail": f"Error processing medication query: {str(e)}",
+                "statuscode": 500,
+            })
+            return self.destination_response
+
+
+class ConditionQueryTransformer(Transformer):
+    """Query patient Condition records from eClinicalWorks."""
+
+    def __init__(self, connection_obj, source_data):
+        self.connection = connection_obj
+        self.source_json = source_data
+        self.destination_response = {
+            "Meta": {
+                "DataModel": "Condition",
+                "EventType": "QueryResponse",
+                "Source": {"ID": str(self.connection.uuid), "Name": "connectionid"},
+                "Raw": [],
+            },
+            "Conditions": [],
+        }
+
+    def transform(self):
+        try:
+            chart = Chart(self.connection)
+            auth_status = chart.authenticate()
+            if auth_status is None:
+                self.destination_response.update({
+                    "Error": "Authentication failed - unable to obtain valid access token",
+                    "statuscode": 401,
+                })
+                return self.destination_response
+
+            patient_id = _extract_patient_id(self.source_json)
+            if not patient_id:
+                self.destination_response.update({
+                    "Error": "Patient ID is required",
+                    "statuscode": 400,
+                })
+                return self.destination_response
+
+            response_data, status_code = chart.get_patient_conditions(patient_id=patient_id)
+
+            if self.source_json.get("Meta", {}).get("Test"):
+                self.destination_response["Meta"]["Raw"].append(response_data)
+
+            if status_code == 200 and isinstance(response_data, dict) \
+                    and response_data.get("resourceType") == "Bundle":
+                self.destination_response["Conditions"] = _normalize_condition_bundle(response_data)
+                self.destination_response["statuscode"] = 200
+            else:
+                self.destination_response.update({
+                    "detail": "Failed to fetch condition data",
+                    "statuscode": status_code,
+                    "error": response_data,
+                })
+            return self.destination_response
+        except Exception as e:
+            logger.exception("Error in ConditionQueryTransformer")
+            self.destination_response.update({
+                "detail": f"Error processing condition query: {str(e)}",
+                "statuscode": 500,
+            })
+            return self.destination_response
+
+
+def _first_coding(codeable_concept):
+    if not isinstance(codeable_concept, dict):
+        return {}
+    coding_list = codeable_concept.get("coding") or []
+    if coding_list and isinstance(coding_list, list):
+        return coding_list[0] or {}
+    return {}
+
+
+def _reference_id(reference_obj):
+    if not isinstance(reference_obj, dict):
+        return None
+    ref = reference_obj.get("reference") or ""
+    return ref.split("/")[-1] if "/" in ref else None
+
+
+def _coded_concept(concept):
+    if not isinstance(concept, dict):
+        return {"Code": None, "CodeSystem": None, "Display": None, "Text": None}
+    coding = _first_coding(concept)
+    return {
+        "Code": coding.get("code"),
+        "CodeSystem": coding.get("system"),
+        "Display": coding.get("display"),
+        "Text": concept.get("text"),
+    }
+
+
+def _extract_dosage_detail(dosage_obj):
+    if not isinstance(dosage_obj, dict):
+        return None
+
+    dose_value = None
+    dose_unit = None
+    dose_code = None
+    dose_system = None
+
+    dose = dosage_obj.get("dose")
+    if not dose:
+        dose_and_rate = dosage_obj.get("doseAndRate") or []
+        if isinstance(dose_and_rate, list) and dose_and_rate:
+            dose = dose_and_rate[0].get("doseQuantity") or {}
+    if isinstance(dose, dict):
+        dose_value = dose.get("value")
+        dose_unit = dose.get("unit")
+        dose_code = dose.get("code")
+        dose_system = dose.get("system")
+
+    route = _coded_concept(dosage_obj.get("route"))
+    method = _coded_concept(dosage_obj.get("method"))
+
+    timing = dosage_obj.get("timing") or {}
+    frequency = None
+    period = None
+    period_unit = None
+    if isinstance(timing, dict):
+        repeat = timing.get("repeat") or {}
+        frequency = repeat.get("frequency")
+        period = repeat.get("period")
+        period_unit = repeat.get("periodUnit")
+
+    return {
+        "Text": dosage_obj.get("text"),
+        "Dose": {
+            "Value": dose_value,
+            "Unit": dose_unit,
+            "Code": dose_code,
+            "System": dose_system,
+        },
+        "Route": route,
+        "Method": method,
+        "Timing": {
+            "Frequency": frequency,
+            "Period": period,
+            "PeriodUnit": period_unit,
+        },
+    }
+
+
+def _normalize_medication_bundle(bundle):
+    medications = []
+    entries = bundle.get("entry") or []
+    for entry_item in entries:
+        resource = entry_item.get("resource") or {}
+        resource_type = resource.get("resourceType")
+        if resource_type not in (
+            "MedicationAdministration",
+            "MedicationStatement",
+            "MedicationRequest",
+        ):
+            continue
+
+        medication_codeable = resource.get("medicationCodeableConcept") or {}
+        medication_reference = resource.get("medicationReference") or {}
+        coding = _first_coding(medication_codeable)
+        medication_name = (
+            coding.get("display")
+            or medication_codeable.get("text")
+            or medication_reference.get("display")
+        )
+
+        # Effective / authored date varies by resource type
+        if resource_type == "MedicationAdministration":
+            effective_date = resource.get("effectiveDateTime")
+            if not effective_date:
+                effective_date = (resource.get("effectivePeriod") or {}).get("start")
+        elif resource_type == "MedicationStatement":
+            effective_date = resource.get("effectiveDateTime") or (
+                (resource.get("effectivePeriod") or {}).get("start")
+            )
+        else:
+            effective_date = resource.get("authoredOn") or resource.get("occurrenceDateTime")
+
+        # Dosage: MedicationRequest uses dosageInstruction (list);
+        # MedicationStatement uses dosage (list); MedicationAdministration uses dosage (object)
+        dosage_source = None
+        if resource_type == "MedicationRequest":
+            instructions = resource.get("dosageInstruction") or []
+            if isinstance(instructions, list) and instructions:
+                dosage_source = instructions[0]
+        else:
+            raw_dosage = resource.get("dosage")
+            if isinstance(raw_dosage, list) and raw_dosage:
+                dosage_source = raw_dosage[0]
+            elif isinstance(raw_dosage, dict):
+                dosage_source = raw_dosage
+        dosage = _extract_dosage_detail(dosage_source)
+
+        # Performer (MedicationAdministration)
+        performers = []
+        for performer in resource.get("performer") or []:
+            actor = performer.get("actor") or {}
+            performers.append({
+                "ID": _reference_id(actor),
+                "Type": actor.get("type"),
+                "Display": actor.get("display"),
+            })
+
+        # Requester (MedicationRequest)
+        requester = resource.get("requester") or {}
+        requester_info = {
+            "ID": _reference_id(requester),
+            "Type": requester.get("type"),
+            "Display": requester.get("display"),
+        } if requester else None
+
+        # Reason (usually a codeable concept or reference list)
+        reasons = []
+        for reason in resource.get("reasonCode") or []:
+            reasons.append(_coded_concept(reason))
+
+        notes = []
+        for note in resource.get("note") or []:
+            if isinstance(note, dict) and note.get("text"):
+                notes.append(note.get("text"))
+
+        medications.append({
+            "ID": resource.get("id"),
+            "ResourceType": resource_type,
+            "Status": (resource.get("status") or "").upper() or None,
+            "Intent": resource.get("intent"),
+            "Name": medication_name,
+            "Code": coding.get("code"),
+            "CodeSystem": coding.get("system"),
+            "Text": medication_codeable.get("text"),
+            "EffectiveDate": effective_date,
+            "LastUpdated": (resource.get("meta") or {}).get("lastUpdated"),
+            "PatientID": _reference_id(resource.get("subject")),
+            "EncounterID": _reference_id(resource.get("context"))
+                           or _reference_id(resource.get("encounter")),
+            "Dosage": dosage,
+            "Performers": performers,
+            "Requester": requester_info,
+            "Reasons": reasons,
+            "Notes": notes,
+        })
+    return medications
+
+
+def _normalize_condition_bundle(bundle):
+    conditions = []
+    entries = bundle.get("entry") or []
+    for entry_item in entries:
+        resource = entry_item.get("resource") or {}
+        if resource.get("resourceType") != "Condition":
+            continue
+
+        code_concept = resource.get("code") or {}
+        coding = _first_coding(code_concept)
+        condition_name = coding.get("display") or code_concept.get("text")
+
+        clinical_status = _first_coding(resource.get("clinicalStatus")).get("code")
+        verification_status = _first_coding(resource.get("verificationStatus")).get("code")
+
+        categories = []
+        for cat in resource.get("category") or []:
+            categories.append(_coded_concept(cat))
+
+        severity = _coded_concept(resource.get("severity")) if resource.get("severity") else None
+
+        body_sites = []
+        for site in resource.get("bodySite") or []:
+            body_sites.append(_coded_concept(site))
+
+        onset_date = resource.get("onsetDateTime")
+        onset_period = resource.get("onsetPeriod") or {}
+        if not onset_date and onset_period:
+            onset_date = onset_period.get("start")
+        abatement_date = resource.get("abatementDateTime") or (
+            (resource.get("abatementPeriod") or {}).get("start")
+        )
+
+        notes = []
+        for note in resource.get("note") or []:
+            if isinstance(note, dict) and note.get("text"):
+                notes.append(note.get("text"))
+
+        conditions.append({
+            "ID": resource.get("id"),
+            "Name": condition_name,
+            "Code": coding.get("code"),
+            "CodeSystem": coding.get("system"),
+            "Text": code_concept.get("text"),
+            "ClinicalStatus": clinical_status,
+            "VerificationStatus": verification_status,
+            "Categories": categories,
+            "Severity": severity,
+            "BodySites": body_sites,
+            "OnsetDate": onset_date,
+            "OnsetPeriodEnd": onset_period.get("end") if isinstance(onset_period, dict) else None,
+            "AbatementDate": abatement_date,
+            "RecordedDate": resource.get("recordedDate"),
+            "LastUpdated": (resource.get("meta") or {}).get("lastUpdated"),
+            "PatientID": _reference_id(resource.get("subject")),
+            "EncounterID": _reference_id(resource.get("encounter")),
+            "RecorderID": _reference_id(resource.get("recorder")),
+            "AsserterID": _reference_id(resource.get("asserter")),
+            "Notes": notes,
+        })
+    return conditions
